@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>$spurdo :DDD gib benis</title>
+  <meta name="description" content="spurdo haz arriv on solana :DDD ebin bear from 2008">
+  <style>
+    /* === RESET === */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    /* === TOKENS === */
+    :root {
+      --cream-page: #f5e9c9;
+      --cream-light: #faf1d6;
+      --paper:      #fffbea;
+      --brown:      #8b5a3c;
+      --brown-dark: #5a3820;
+      --muzzle:     #eacf94;
+      --mouth-pink: #e8a098;
+      --ink:        #1a1a1a;
+      --ink-soft:   #2a2a2a;
+      --yellow:     #ffe066;
+      --red-troll:  #e94b3c;
+      --green-ok:   #8cc968;
+      --shadow:     3px 3px 0 var(--ink);
+      --shadow-lg:  6px 6px 0 var(--ink);
+      --font-main:  "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive;
+      --font-mono:  "Courier New", "Courier", monospace;
+    }
+
+    body {
+      background: var(--cream-page);
+      background-image:
+        radial-gradient(circle at 10% 10%, rgba(255,255,255,0.45) 0, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(255,255,255,0.35) 0, transparent 45%);
+      font-family: var(--font-main);
+      color: var(--ink);
+      overflow-x: hidden;
+      min-height: 100vh;
+      padding: 24px 16px 80px;
+      position: relative;
+    }
+
+    /* grid paper-ish overlay like a cheap notebook */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* === VISITOR COUNTER (2008 web flavor) === */
+    .visitor {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      background: #000;
+      color: #00ff41;
+      padding: 6px 12px;
+      border: 2px solid var(--ink);
+      box-shadow: var(--shadow);
+      transform: rotate(-1.4deg);
+      margin-bottom: 24px;
+    }
+    .visitor .blink { animation: blink 1.2s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* === CARD BASE === */
+    .card {
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 28px 24px;
+      margin: 36px 0;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+    }
+    .card::before {
+      /* scotch tape */
+      content: "";
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%) rotate(-3deg);
+      width: 80px;
+      height: 22px;
+      background: rgba(255,255,200,0.7);
+      border: 1px dashed rgba(0,0,0,0.25);
+    }
+    .card.tilt-l { transform: rotate(-1.2deg); }
+    .card.tilt-r { transform: rotate(1.3deg); }
+    .card.tilt-xl { transform: rotate(-2deg); }
+
+    /* === HERO === */
+    .hero {
+      text-align: center;
+      padding: 20px 12px 8px;
+      position: relative;
+    }
+    .hero-bear {
+      width: 320px;
+      height: auto;
+      margin: 0 auto 8px;
+      display: block;
+    }
+    .hero h1 {
+      font-size: clamp(2.4rem, 7vw, 4.6rem);
+      line-height: 0.95;
+      letter-spacing: -1px;
+      color: var(--ink);
+      text-shadow:
+        4px 4px 0 var(--cream-light),
+        5px 5px 0 var(--ink);
+      margin: 8px 0 16px;
+      transform: rotate(-1.5deg);
+    }
+    .hero .sub {
+      font-size: clamp(1rem, 2.4vw, 1.25rem);
+      max-width: 560px;
+      margin: 0 auto 14px;
+      line-height: 1.4;
+      color: var(--ink-soft);
+    }
+    .hero-ticker {
+      display: inline-block;
+      background: var(--yellow);
+      border: 3px solid var(--ink);
+      padding: 8px 20px;
+      font-size: 1.4rem;
+      transform: rotate(2deg);
+      box-shadow: var(--shadow);
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-weight: bold;
+    }
+
+    /* Hero CTA button - goes to deposit or countdown */
+    .hero-cta-row {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .cta-big {
+      display: inline-block;
+      background: var(--green-ok);
+      color: var(--ink);
+      border: 4px solid var(--ink);
+      padding: 14px 26px;
+      font-family: var(--font-main);
+      font-size: 1.25rem;
+      text-decoration: none;
+      box-shadow: var(--shadow-lg);
+      transform: rotate(-1.5deg);
+      transition: transform 0.1s;
+      cursor: pointer;
+      animation: bounce 2s ease-in-out infinite;
+    }
+    .cta-big:hover { transform: rotate(-3deg) scale(1.03); }
+    .cta-big:active {
+      transform: rotate(-1deg) translate(2px, 2px);
+      box-shadow: 3px 3px 0 var(--ink);
+    }
+    @keyframes bounce {
+      0%, 100% { transform: rotate(-1.5deg) translateY(0); }
+      50% { transform: rotate(-1.5deg) translateY(-3px); }
+    }
+    .cta-secondary {
+      display: inline-block;
+      background: var(--paper);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      padding: 12px 22px;
+      font-family: var(--font-main);
+      font-size: 1rem;
+      text-decoration: none;
+      box-shadow: var(--shadow);
+      transform: rotate(1deg);
+      transition: transform 0.1s;
+    }
+    .cta-secondary:hover { transform: rotate(2deg) scale(1.03); }
+
+    /* HOWTO steps */
+    .howto h2 { background: #c5e1ff; }
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+      margin: 18px 0 24px;
+    }
+    @media (min-width: 700px) {
+      .steps { grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    }
+    .step {
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 20px 18px 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+      padding-top: 28px;
+    }
+    .step:nth-child(1) { transform: rotate(-0.8deg); }
+    .step:nth-child(2) { transform: rotate(1deg); }
+    .step:nth-child(3) { transform: rotate(-1.3deg); }
+    .step-num {
+      position: absolute;
+      top: -20px;
+      left: -12px;
+      width: 44px;
+      height: 44px;
+      background: var(--red-troll);
+      color: var(--paper);
+      font-family: var(--font-mono);
+      font-size: 1.6rem;
+      font-weight: bold;
+      border: 3px solid var(--ink);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow);
+      transform: rotate(-8deg);
+    }
+    .step h3 {
+      font-size: 1.2rem;
+      margin-bottom: 8px;
+      color: var(--ink);
+    }
+    .step p {
+      font-size: 0.98rem;
+      line-height: 1.5;
+      color: var(--ink-soft);
+    }
+    .howto-cta-row {
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    /* small doodle decorations scattered */
+    .doodle {
+      position: absolute;
+      pointer-events: none;
+      opacity: 0.85;
+    }
+
+    /* giant 2008-ass "under construction" banner */
+    .banner-under {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--ink);
+      background: repeating-linear-gradient(
+        45deg,
+        var(--yellow) 0 12px,
+        var(--ink) 12px 18px
+      );
+      padding: 8px 16px;
+      margin: 16px 0;
+      border: 2px solid var(--ink);
+    }
+    .banner-under span {
+      background: var(--paper);
+      padding: 2px 10px;
+      letter-spacing: 2px;
+    }
+
+    /* === LORE === */
+    .lore h2 { transform: rotate(-1deg); }
+    .lore p {
+      font-size: 1.08rem;
+      line-height: 1.65;
+      margin-bottom: 14px;
+    }
+    .lore p:last-child { margin-bottom: 0; }
+
+    h2 {
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      margin-bottom: 18px;
+      display: inline-block;
+      background: var(--cream-light);
+      padding: 4px 14px;
+      border: 3px solid var(--ink);
+      box-shadow: var(--shadow);
+    }
+
+    /* === TROLL SECTION === */
+    .troll {
+      text-align: center;
+      background: var(--cream);
+      position: relative;
+      overflow: hidden;
+      min-height: 340px;
+    }
+    .troll h2 { background: var(--red-troll); color: var(--paper); }
+    .troll-hint {
+      font-size: 1rem;
+      margin: 0 0 28px;
+      color: var(--ink-soft);
+    }
+    .troll-stage {
+      position: relative;
+      height: 380px;
+      margin: 0 auto;
+      max-width: 520px;
+    }
+    .troll-btn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--red-troll);
+      color: #fff;
+      font-family: var(--font-main);
+      font-size: 1.35rem;
+      padding: 18px 30px;
+      border: 4px solid var(--ink);
+      box-shadow: var(--shadow-lg);
+      cursor: pointer;
+      transition: top 0.18s ease, left 0.18s ease, background 0.2s;
+      animation: pulse 1.4s ease-in-out infinite;
+      user-select: none;
+      z-index: 2;
+    }
+    .troll-btn:active { transform: translate(-50%, -50%) scale(0.97); }
+    @keyframes pulse {
+      0%, 100% { box-shadow: var(--shadow-lg); }
+      50% { box-shadow: 8px 8px 0 var(--ink); }
+    }
+    .troll-arrow {
+      position: absolute;
+      left: 12%;
+      top: 20px;
+      width: 100px;
+      height: 80px;
+      opacity: 0.8;
+      transform: rotate(10deg);
+    }
+    .troll-reveal {
+      position: absolute;
+      inset: 0;
+      background: var(--brown);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 20px;
+      z-index: 10;
+      border: 4px solid var(--ink);
+    }
+    .troll-reveal.show {
+      display: flex;
+      animation: pop 0.3s ease-out;
+    }
+    @keyframes pop {
+      0% { transform: scale(0.7); opacity: 0; }
+      60% { transform: scale(1.05); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .troll-reveal-text {
+      font-size: 1.6rem;
+      line-height: 1.3;
+      text-align: center;
+      max-width: 580px;
+      text-shadow: 2px 2px 0 rgba(255,255,255,0.8);
+    }
+    .troll-zoom-wrap {
+      width: min(100%, 280px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .troll-zoom-img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .troll-close {
+      background: var(--ink);
+      color: #fff;
+      border: 2px solid var(--ink);
+      padding: 8px 18px;
+      font-family: var(--font-main);
+      font-size: 1rem;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+
+    /* === COUNTDOWN === */
+    .countdown {
+      text-align: center;
+      background: var(--paper);
+    }
+    .countdown h2 { background: var(--yellow); }
+    .countdown .desc {
+      font-size: 1rem;
+      margin-bottom: 24px;
+      color: var(--ink-soft);
+    }
+    .timer {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin: 20px 0 24px;
+    }
+    .unit {
+      background: var(--ink);
+      color: #00ff41;
+      border: 3px solid var(--ink);
+      padding: 16px 12px 8px;
+      min-width: 96px;
+      box-shadow: var(--shadow);
+      font-family: var(--font-mono);
+      position: relative;
+      transform: rotate(-0.8deg);
+    }
+    .unit:nth-child(2) { transform: rotate(1deg); }
+    .unit:nth-child(3) { transform: rotate(-1.4deg); }
+    .unit:nth-child(4) { transform: rotate(0.6deg); }
+    .unit .num {
+      font-size: 2.8rem;
+      font-weight: bold;
+      line-height: 1;
+      letter-spacing: 2px;
+      animation: flicker 3s ease-in-out infinite;
+    }
+    @keyframes flicker {
+      0%, 100% { opacity: 1; }
+      47% { opacity: 1; }
+      48% { opacity: 0.7; }
+      49% { opacity: 1; }
+    }
+    .unit .lbl {
+      font-size: 0.75rem;
+      margin-top: 6px;
+      color: #00ff41;
+      letter-spacing: 1px;
+      opacity: 0.7;
+    }
+    .countdown-foot {
+      font-size: 0.95rem;
+      color: var(--ink-soft);
+      margin-top: 10px;
+    }
+    .countdown-expired {
+      font-size: 1.4rem;
+      color: var(--red-troll);
+      padding: 20px;
+      border: 3px dashed var(--red-troll);
+      margin: 20px auto;
+      max-width: 500px;
+      display: none;
+    }
+    .countdown-expired.show { display: block; }
+
+    /* === REV SHARE === */
+    .revshare h2 { background: var(--green-ok); }
+    .terms {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    @media (min-width: 640px) {
+      .terms { grid-template-columns: 1fr 1fr; }
+    }
+    .term {
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+    .term:nth-child(1) { transform: rotate(-1deg); background: #ffeaa7; }
+    .term:nth-child(2) { transform: rotate(1deg); background: #d4f1f4; }
+    .term:nth-child(3) { transform: rotate(-0.5deg); background: #ffd5d5; }
+    .term:nth-child(4) { transform: rotate(1.2deg); background: #d6f5d6; }
+    .term-num {
+      font-family: var(--font-mono);
+      font-size: 2rem;
+      font-weight: bold;
+      display: block;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .term-lbl {
+      font-size: 1rem;
+      line-height: 1.4;
+    }
+
+    /* === CA === */
+    .ca-card {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+    .ca-card::before { background: rgba(255,255,220,0.8); }
+    .ca-card h3 {
+      display: inline-block;
+      background: var(--yellow);
+      color: var(--ink);
+      padding: 4px 14px;
+      border: 2px solid var(--paper);
+      margin-bottom: 14px;
+      font-size: 1.2rem;
+    }
+    .ca-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .ca-addr {
+      flex: 1 1 280px;
+      background: #111;
+      border: 2px dashed var(--paper);
+      padding: 12px 14px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: #00ff41;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .ca-copy {
+      background: var(--yellow);
+      color: var(--ink);
+      border: 3px solid var(--paper);
+      padding: 12px 20px;
+      font-family: var(--font-main);
+      font-size: 1rem;
+      cursor: pointer;
+      box-shadow: 3px 3px 0 var(--paper);
+      transition: transform 0.1s;
+      white-space: nowrap;
+    }
+    .ca-copy:hover { transform: translate(-1px, -1px); }
+    .ca-copy:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--paper); }
+    .ca-copy.copied { background: var(--green-ok); }
+
+    /* === PEEKING SPURDO (troll visual) === */
+    /* === SCOOTER SPURDO (rides across bottom L→R) === */
+    .scooter {
+      position: fixed;
+      bottom: 8px;
+      left: 0;
+      height: 200px;
+      width: auto;
+      z-index: 100;
+      pointer-events: none;
+      /* -100% = fully offscreen left (relative to image width)
+         100vw  = fully offscreen right (relative to viewport width) */
+      animation: scoot 16s linear 2s infinite;
+      image-rendering: pixelated;
+    }
+    @keyframes scoot {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(100vw); }
+    }
+
+    /* === FOOTER === */
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      font-size: 0.85rem;
+      color: var(--ink-soft);
+      line-height: 1.8;
+      padding: 20px;
+      opacity: 0.75;
+      font-family: var(--font-mono);
+    }
+    footer .grin { font-size: 1.2rem; font-family: var(--font-main); }
+    footer .x-link {
+      display: inline-block;
+      color: var(--ink);
+      background: var(--paper);
+      border: 2px solid var(--ink);
+      padding: 6px 14px;
+      text-decoration: none;
+      font-family: var(--font-main);
+      font-size: 1rem;
+      box-shadow: var(--shadow);
+      transform: rotate(-1deg);
+      transition: transform 0.1s;
+      opacity: 1;
+    }
+    footer .x-link:hover { transform: rotate(1.5deg) scale(1.03); }
+
+    /* === MOBILE ADJUSTMENTS === */
+    @media (max-width: 520px) {
+      body { padding: 12px 8px 60px; }
+      .card { padding: 22px 16px; margin: 24px 0; }
+      .hero-bear { width: 260px; }
+      .unit { min-width: 72px; padding: 12px 8px 6px; }
+      .unit .num { font-size: 2rem; }
+      .scooter { height: 140px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Visitor counter for 2008 flavor -->
+  <div class="visitor">u r visitor #0000<span class="blink">3</span> :D</div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <!-- The big canonical Spurdo. crude MS paint wobble via feTurbulence -->
+    <!-- The big canonical Spurdo. pixel-perfect reference image. -->
+    <img class="hero-bear" src="spurdo.png" alt="spurdo" width="600" height="441">
+
+    <!-- crude filter kept available for other decorative SVGs on the page -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <filter id="crude" x="-15%" y="-15%" width="130%" height="130%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="2" seed="4" result="t"/>
+          <feDisplacementMap in="SourceGraphic" in2="t" scale="5"/>
+        </filter>
+      </defs>
+    </svg>
+
+    <h1>gib benis<br>:DDD</h1>
+    <p class="sub">da ebin bear from 2008 haz arriv on solana he nevr stob grining not now not evr :DDD</p>
+    <div class="hero-ticker">$spurdo</div>
+
+    <div class="hero-cta-row">
+      <a href="#countdown" class="cta-big" id="heroCta">deposit now :DDD</a>
+      <a href="#howto" class="cta-secondary">wat do i do :D</a>
+    </div>
+
+    <div class="banner-under">
+      <span>under konstruktion</span>
+      <span>since 2008</span>
+    </div>
+  </section>
+
+  <!-- LORE -->
+  <section class="card tilt-l lore">
+    <h2>wat is spurdo</h2>
+    <p>back in 2008 on a finnish imagebord a guy drew a brown bear in ms baint he called him spurdo spärde he had lidl beady eyes and a grin so wide it almost eated his own face :D</p>
+    <p>spurdo nevr stobed grining not wen evry bumb rugged not wen evry chart went red not wen da wurld wuz on fire jus grining day and night 2008 til now</p>
+    <p>da grin iz da bruduct dats it dats da hole ding :DDD</p>
+  </section>
+
+  <!-- TROLL SECTION -->
+  <section class="card tilt-r troll">
+    <h2>bress da buttun 4 benis</h2>
+    <p class="troll-hint">jus klik it bro its rite dere :D</p>
+
+    <div class="troll-stage" id="stage">
+      <!-- hand drawn arrow pointing at the button -->
+      <svg class="troll-arrow" viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g filter="url(#crude)">
+          <path d="M 10 20 Q 50 10, 80 40 L 70 30 M 80 40 L 68 48"
+                stroke="#1a1a1a" stroke-width="3" fill="none"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </svg>
+
+      <button class="troll-btn" id="trollBtn" type="button">bress 4 benis :DDD</button>
+
+      <div class="troll-reveal" id="trollReveal" role="dialog" aria-modal="false">
+        <!-- extreme close-up: image scaled 2x + clipped to reveal panel for zoom effect -->
+        <div class="troll-zoom-wrap">
+          <img class="troll-zoom-img" src="spurdo.png" alt="" aria-hidden="true">
+        </div>
+        <div class="troll-reveal-text">hahahha u klikked :DDD<br>dere iz no benis<br>jus da grin</div>
+        <button class="troll-close" id="trollClose" type="button">ok i will leev</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- COUNTDOWN -->
+  <section class="card tilt-xl countdown" id="countdown">
+    <h2>time til da deposit windo klose</h2>
+    <p class="desc">u hab 3 days to deposit ur $spurdo into da benis pool before da windo klose and da lock begins :D</p>
+
+    <div class="timer" id="timer" aria-live="polite">
+      <div class="unit"><div class="num" id="d">00</div><div class="lbl">day</div></div>
+      <div class="unit"><div class="num" id="h">00</div><div class="lbl">hr</div></div>
+      <div class="unit"><div class="num" id="m">00</div><div class="lbl">min</div></div>
+      <div class="unit"><div class="num" id="s">00</div><div class="lbl">sek</div></div>
+    </div>
+
+    <p class="countdown-foot">counting down til windo klose :DDD</p>
+
+    <div class="countdown-expired" id="expired">
+      da windo iz klose :D<br>
+      da benis iz now locked for 20 moons
+    </div>
+  </section>
+
+  <!-- HOW TO DEBOIST -->
+  <section class="card tilt-r howto" id="howto">
+    <h2>how 2 deposit</h2>
+    <p style="margin-bottom: 6px;">3 steps it iz ez :D</p>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <h3>git sum spurdo</h3>
+        <p>buy $spurdo on ur fav dex (raydium jup orca whatevr) or swap from whatevr token u got</p>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <h3>deposit in da pool</h3>
+        <p>send ur spurdo to da benis pool before da windo klose (see timer above)</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <h3>grin 4 20 moons</h3>
+        <p>5% unlocks evry moon fees flow to u while u jus grin :DDD</p>
+      </div>
+    </div>
+
+    <div class="howto-cta-row">
+      <a href="#countdown" class="cta-big" id="howtoCta">deposit now :DDD</a>
+    </div>
+  </section>
+
+  <!-- REV SHARE -->
+  <section class="card tilt-l revshare">
+    <h2>da ebin benis shar :DDD</h2>
+    <p style="margin-bottom: 6px;">heer iz how it works no tricks jus numbers :D</p>
+
+    <div class="terms">
+      <div class="term">
+        <span class="term-num">50%</span>
+        <span class="term-lbl">of da creator fees goes to humans who deposit dere spurdo in da windo</span>
+      </div>
+      <div class="term">
+        <span class="term-num">3 days</span>
+        <span class="term-lbl">deposit windo after dat no more can join da pool</span>
+      </div>
+      <div class="term">
+        <span class="term-num">20 moons</span>
+        <span class="term-lbl">ur spurdo gets locked for 20 moons (moons = months in spurdish :D)</span>
+      </div>
+      <div class="term">
+        <span class="term-num">5% / moon</span>
+        <span class="term-lbl">evry moon 5% unlocks after 20 moons u get ur full benis back :DDD</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- CA -->
+  <section class="card tilt-r ca-card">
+    <h3>contract addres</h3>
+    <div class="ca-row">
+      <div class="ca-addr" id="caAddr">991L48va9rMiysu3fCpeg5p9bN4NLzhujojzmFtkgacE</div>
+      <button class="ca-copy" id="caCopy" type="button">copy :D</button>
+    </div>
+    <p style="margin-top: 14px; font-size: 0.85rem; opacity: 0.8;">on solana if u see a different addres it iz a scam da grin iz above</p>
+  </section>
+
+  <footer>
+    <div class="grin">:DDD</div>
+    <a href="https://x.com/spurdo" target="_blank" rel="noopener" class="x-link">&gt; folo @spurdo on x &lt;</a><br><br>
+    jus spurdo grining<br>
+    not afiliated w any pump or scam<br>
+    no roadmap no promise no rushin<br>
+    © 2008 spurdo spärde
+  </footer>
+
+</div>
+
+<!-- spurdo on a scooter rides across the bottom of the screen -->
+<img class="scooter" src="spurdo-scooter.png" alt="" aria-hidden="true">
+
+<script>
+  /* === KONFIGURASHUN ==========================================
+     Set these 3 constants b4 u deploy dis:
+     ============================================================ */
+  const DEADLINE_ISO = null;   // e.g. '2026-04-25T23:59:59Z'. null = 3 days from load
+  const DEPOSIT_URL  = null;   // e.g. 'https://app.spurdo.xyz/deposit'. null = scroll to countdown
+  const X_URL        = 'https://x.com/spurdo';
+
+  const deadline = DEADLINE_ISO
+    ? new Date(DEADLINE_ISO)
+    : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+
+  /* === CTA buttons ========================================== */
+  function wireCta(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (DEPOSIT_URL) {
+      el.setAttribute('href', DEPOSIT_URL);
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener');
+    }
+    // If DEPOSIT_URL is null the default href="#countdown" scrolls to countdown section
+  }
+  wireCta('heroCta');
+  wireCta('howtoCta');
+
+  const $d = document.getElementById('d');
+  const $h = document.getElementById('h');
+  const $m = document.getElementById('m');
+  const $s = document.getElementById('s');
+  const $timer = document.getElementById('timer');
+  const $expired = document.getElementById('expired');
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function tick() {
+    const ms = deadline - new Date();
+    if (ms <= 0) {
+      $d.textContent = '00';
+      $h.textContent = '00';
+      $m.textContent = '00';
+      $s.textContent = '00';
+      $timer.style.opacity = '0.4';
+      $expired.classList.add('show');
+      return false;
+    }
+    const days = Math.floor(ms / 86400000);
+    const hrs  = Math.floor((ms % 86400000) / 3600000);
+    const min  = Math.floor((ms % 3600000) / 60000);
+    const sec  = Math.floor((ms % 60000) / 1000);
+    $d.textContent = pad(days);
+    $h.textContent = pad(hrs);
+    $m.textContent = pad(min);
+    $s.textContent = pad(sec);
+    return true;
+  }
+  tick();
+  const tId = setInterval(() => { if (!tick()) clearInterval(tId); }, 1000);
+
+  /* === TROLL BUTTON ============================================
+     Evades cursor on hover up to 3 times, then lets you click.
+     Touch devices: no hover event fires, so tap = immediate reveal.
+     ============================================================ */
+  const btn = document.getElementById('trollBtn');
+  const stage = document.getElementById('stage');
+  const reveal = document.getElementById('trollReveal');
+  const closeBtn = document.getElementById('trollClose');
+  let evadeCount = 0;
+  const MAX_EVADES = 3;
+
+  function randomEvadePosition() {
+    const stageRect = stage.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const maxX = stageRect.width - btnRect.width;
+    const maxY = stageRect.height - btnRect.height;
+    if (maxX <= 0 || maxY <= 0) return;
+    const x = Math.random() * maxX;
+    const y = Math.random() * maxY;
+    btn.style.top = y + 'px';
+    btn.style.left = x + 'px';
+    btn.style.transform = 'none';
+  }
+
+  btn.addEventListener('mouseenter', () => {
+    if (evadeCount < MAX_EVADES) {
+      evadeCount++;
+      randomEvadePosition();
+    }
+  });
+
+  function doTroll() {
+    reveal.classList.add('show');
+  }
+  btn.addEventListener('click', doTroll);
+
+  closeBtn.addEventListener('click', () => {
+    reveal.classList.remove('show');
+    // reset the button to center so the gag can replay
+    btn.style.top = '50%';
+    btn.style.left = '50%';
+    btn.style.transform = 'translate(-50%, -50%)';
+    evadeCount = 0;
+  });
+
+  /* === KOPY CA ============================================ */
+  const copyBtn = document.getElementById('caCopy');
+  const caText = document.getElementById('caAddr').textContent.trim();
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(caText);
+    } catch (e) {
+      // fallback: manually select
+      const r = document.createRange();
+      r.selectNode(document.getElementById('caAddr'));
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(r);
+      try { document.execCommand('copy'); } catch (_) {}
+      window.getSelection().removeAllRanges();
+    }
+    copyBtn.classList.add('copied');
+    copyBtn.textContent = 'copied :DDD';
+    setTimeout(() => {
+      copyBtn.classList.remove('copied');
+      copyBtn.textContent = 'copy :D';
+    }, 1800);
+  });
+</script>
+
+</body>
+</html>

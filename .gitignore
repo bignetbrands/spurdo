@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local testing / node junk (in case anyone runs a server tool)
+node_modules/
+.env
+.env.local
+*.log
