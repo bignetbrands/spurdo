@@ -414,6 +414,17 @@
       margin-bottom: 24px;
       color: var(--ink-soft);
     }
+    .value-prop {
+      font-size: 1.15rem;
+      line-height: 1.45;
+      max-width: 580px;
+      margin: 18px auto 22px;
+      color: var(--ink);
+      padding: 12px 18px;
+      background: var(--cream-light);
+      border: 2px dashed var(--ink);
+      transform: rotate(-0.6deg);
+    }
     .timer {
       display: flex;
       justify-content: center;
@@ -455,6 +466,63 @@
       letter-spacing: 1px;
       opacity: 0.7;
     }
+    .deposit-addr-wrap {
+      max-width: 580px;
+      margin: 24px auto 18px;
+      padding: 16px 18px;
+      background: var(--green-ok);
+      border: 3px solid var(--ink);
+      box-shadow: var(--shadow);
+      transform: rotate(0.4deg);
+    }
+    .deposit-addr-label {
+      font-size: 1rem;
+      margin-bottom: 10px;
+      color: var(--ink);
+      font-weight: bold;
+    }
+    .deposit-addr-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: stretch;
+    }
+    .deposit-addr {
+      flex: 1 1 240px;
+      background: #111;
+      color: #00ff41;
+      border: 2px dashed var(--ink);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .deposit-addr-copy {
+      background: var(--yellow);
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      padding: 8px 16px;
+      font-family: var(--font-main);
+      font-size: 0.95rem;
+      cursor: pointer;
+      box-shadow: 2px 2px 0 var(--ink);
+      transition: transform 0.1s;
+      white-space: nowrap;
+    }
+    .deposit-addr-copy:hover { transform: translate(-1px, -1px); }
+    .deposit-addr-copy:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }
+    .deposit-addr-copy.copied { background: var(--cream-light); }
+    .deposit-addr-warn {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: var(--ink);
+      background: var(--paper);
+      padding: 6px 10px;
+      border: 2px dashed var(--ink);
+      display: inline-block;
+    }
+
     .countdown-foot {
       font-size: 0.95rem;
       color: var(--ink-soft);
@@ -621,9 +689,8 @@
   <!-- Visitor counter for 2008 flavor -->
   <div class="visitor">u r visitor #0000<span class="blink">3</span> :D</div>
 
-  <!-- HERO -->
+  <!-- HERO (top of page) -->
   <section class="hero">
-    <!-- The big canonical Spurdo. crude MS paint wobble via feTurbulence -->
     <!-- The big canonical Spurdo. pixel-perfect reference image. -->
     <img class="hero-bear" src="spurdo.png" alt="spurdo" width="600" height="441">
 
@@ -639,18 +706,41 @@
 
     <h1>gib benis<br>:DDD</h1>
     <p class="sub">da ebin bear from 2008 haz arriv on solana he nevr stob grining not now not evr :DDD</p>
-    <div class="hero-ticker">$spurdo</div>
+  </section>
 
-    <div class="hero-cta-row">
-      <a href="#countdown" class="cta-big" id="heroCta">deposit now :DDD</a>
-      <a href="#howto" class="cta-secondary">wat do i do :D</a>
+  <!-- COUNTDOWN -->
+  <section class="card tilt-xl countdown" id="countdown">
+    <h2>deposit windo klose in</h2>
+    <p class="value-prop">debosit ur $spurdo and get a shar of 50% of da kreator fees :DDD</p>
+
+    <div class="timer" id="timer" aria-live="polite">
+      <div class="unit"><div class="num" id="d">00</div><div class="lbl">day</div></div>
+      <div class="unit"><div class="num" id="h">00</div><div class="lbl">hr</div></div>
+      <div class="unit"><div class="num" id="m">00</div><div class="lbl">min</div></div>
+      <div class="unit"><div class="num" id="s">00</div><div class="lbl">sek</div></div>
     </div>
 
-    <div class="banner-under">
-      <span>under konstruktion</span>
-      <span>since 2008</span>
+    <div class="deposit-addr-wrap">
+      <div class="deposit-addr-label">send ur $spurdo to dis multisig wallet :DDD</div>
+      <div class="deposit-addr-row">
+        <div class="deposit-addr" id="depositAddr">ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd</div>
+        <button class="deposit-addr-copy" id="depositAddrCopy" type="button">copy :D</button>
+      </div>
+      <div class="deposit-addr-warn">only send $spurdo on solana — anyding else iz lost forevr :D</div>
+    </div>
+
+    <p class="countdown-foot">deposit ur $spurdo b4 da windo klose :DDD</p>
+
+    <div class="countdown-expired" id="expired">
+      da windo iz klose :D<br>
+      da benis iz now locked for 20 moons
     </div>
   </section>
+
+  <div class="banner-under">
+    <span>under konstruktion</span>
+    <span>since 2008</span>
+  </div>
 
   <!-- LORE -->
   <section class="card tilt-l lore">
@@ -685,26 +775,6 @@
         <div class="troll-reveal-text">hahahha u klikked :DDD<br>dere iz no benis<br>jus da grin</div>
         <button class="troll-close" id="trollClose" type="button">ok i will leev</button>
       </div>
-    </div>
-  </section>
-
-  <!-- COUNTDOWN -->
-  <section class="card tilt-xl countdown" id="countdown">
-    <h2>time til da deposit windo klose</h2>
-    <p class="desc">u hab 3 days to deposit ur $spurdo into da benis pool before da windo klose and da lock begins :D</p>
-
-    <div class="timer" id="timer" aria-live="polite">
-      <div class="unit"><div class="num" id="d">00</div><div class="lbl">day</div></div>
-      <div class="unit"><div class="num" id="h">00</div><div class="lbl">hr</div></div>
-      <div class="unit"><div class="num" id="m">00</div><div class="lbl">min</div></div>
-      <div class="unit"><div class="num" id="s">00</div><div class="lbl">sek</div></div>
-    </div>
-
-    <p class="countdown-foot">counting down til windo klose :DDD</p>
-
-    <div class="countdown-expired" id="expired">
-      da windo iz klose :D<br>
-      da benis iz now locked for 20 moons
     </div>
   </section>
 
@@ -808,7 +878,6 @@
     }
     // If DEPOSIT_URL is null the default href="#countdown" scrolls to countdown section
   }
-  wireCta('heroCta');
   wireCta('howtoCta');
 
   const $d = document.getElementById('d');
@@ -889,28 +958,33 @@
     evadeCount = 0;
   });
 
-  /* === KOPY CA ============================================ */
-  const copyBtn = document.getElementById('caCopy');
-  const caText = document.getElementById('caAddr').textContent.trim();
-  copyBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(caText);
-    } catch (e) {
-      // fallback: manually select
-      const r = document.createRange();
-      r.selectNode(document.getElementById('caAddr'));
-      window.getSelection().removeAllRanges();
-      window.getSelection().addRange(r);
-      try { document.execCommand('copy'); } catch (_) {}
-      window.getSelection().removeAllRanges();
-    }
-    copyBtn.classList.add('copied');
-    copyBtn.textContent = 'copied :DDD';
-    setTimeout(() => {
-      copyBtn.classList.remove('copied');
-      copyBtn.textContent = 'copy :D';
-    }, 1800);
-  });
+  /* === COPY HELPERS (works for any addr/btn pair) ========== */
+  function wireCopyButton(btnId, addrId) {
+    const btn = document.getElementById(btnId);
+    const addrEl = document.getElementById(addrId);
+    if (!btn || !addrEl) return;
+    const text = addrEl.textContent.trim();
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        const r = document.createRange();
+        r.selectNode(addrEl);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(r);
+        try { document.execCommand('copy'); } catch (_) {}
+        window.getSelection().removeAllRanges();
+      }
+      btn.classList.add('copied');
+      btn.textContent = 'copied :DDD';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.textContent = 'copy :D';
+      }, 1800);
+    });
+  }
+  wireCopyButton('caCopy', 'caAddr');
+  wireCopyButton('depositAddrCopy', 'depositAddr');
 </script>
 
 </body>
