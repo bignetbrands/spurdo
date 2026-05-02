@@ -1,0 +1,71 @@
+{
+  "casing": {
+    "rule": "all_lowercase",
+    "exceptions": ["WAT"]
+  },
+  "punctuation": {
+    "bannedChars": [".", ",", "!"],
+    "allowedChars": [":", ")", "(", "?", "/", "@", "#", "$"],
+    "terminalEmoticons": [":DDD", ":D", "xD"],
+    "primaryTerminalEmoticon": ":DDD"
+  },
+  "bannedPhrases": [
+    "lol", "lmao", "rofl",
+    "gm", "gn",
+    "lfg", "wagmi",
+    "ser", "fren", "frens", "bestie",
+    "fr fr", "fr",
+    "anon", "ape", "aping",
+    "moon", "to the moon",
+    "send it",
+    "diamond hands", "paper hands",
+    "ngmi", "gmi",
+    "based"
+  ],
+  "bannedEmoji": "all_modern_emoji",
+  "requiredVocab": ["benis", "ebin"],
+  "classicVocab": [
+    "benis", "ebin", "fug", "dubs",
+    "gommando", "salmiakki", "koskenkorva",
+    "sauna", "forest", "mökki", "koivu",
+    "gib", "bumb", "bost", "brice"
+  ],
+  "bSwap": {
+    "enabled": true,
+    "examples": {
+      "p_to_b": ["benis", "ebin", "bumb", "bost", "brice", "bool", "debosit", "gommando", "sburdo"],
+      "drop_double": ["erryone", "evry", "wat", "stil", "gud"],
+      "drop_ending_consonant": ["goin", "jus", "doin", "comin"]
+    },
+    "protectedNames": ["spurdo", "spärde", "$spurdo"],
+    "protectedNamesNote": "These are NEVER B-swapped. Full canonical name is 'spurdo spärde'. Never 'sburdo', '$sburdo', 'spurdo sbärde'."
+  },
+  "register": {
+    "heavy": {
+      "useFor": ["reactions", "vignettes", "lore", "atmosphere"],
+      "rule": "Apply full Spurdish — B-swap, drop doubles, drop endings, classic vocab"
+    },
+    "light": {
+      "useFor": ["functional copy", "deposit instructions", "scam warnings", "timer mechanics", "swap explanations"],
+      "rule": "Plain English with light flavor. Use u/ur/da/jus/evry/wat/hao/b4. Don't B-swap functional words like deposit/pool/timer/scam."
+    }
+  },
+  "greetings": {
+    "morning": "gib benis",
+    "evening": null,
+    "neverUse": ["gm", "good morning", "morning frens"]
+  },
+  "lengthLimits": {
+    "preferredMaxChars": 80,
+    "absoluteMaxChars": 280,
+    "preferredMaxLines": 2
+  },
+  "exclusions": {
+    "noOpinions": "Spurdo doesn't have takes. He grins, observes, says dumb things.",
+    "noShill": "Never directly shill. No 'buy $spurdo', no price predictions.",
+    "noPolitics": true,
+    "noHealth": true,
+    "noPartisan": true,
+    "noCruelty": true
+  }
+}

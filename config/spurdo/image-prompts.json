@@ -1,0 +1,67 @@
+{
+  "referenceImage": "spurdo-reference.png",
+  "model": "gpt-image-1",
+  "size": "1024x1024",
+  "quality": "medium",
+  "lockedPromptTemplate": "crude MS Paint drawing of spurdo spärde, a brown lumpy asymmetric bear head with two humps and a V-crease between them at the top of the head (NOT separate ears), 3-4 wavy horizontal forehead wrinkle lines, plain black oval eyes with no white highlights, walrus-mustache muzzle made of two cream/tan tilted ellipses (one on each side), black oval nose centered between the muzzle lobes, pink open grinning mouth showing white zipper teeth below the nose, bold uneven black outline, flat fill no shading no gradients, deliberately wobbly hand-drawn lines like an MS Paint sketch from 2008, pasted onto [SCENE] without lighting match or drop shadow as if cut and pasted in. The bear looks crude, charming, dumb, grinning. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cleaned up. NO text, NO logos, NO uniforms, NO weapons.",
+  "scenesByPillar": {
+    "pure_reactions": [
+      "a flat plain off-white background with no scene, just spurdo centered as a portrait",
+      "a flat 4chan-green colored background with no scene at all",
+      "a plain white background, just spurdo small in the center"
+    ],
+    "scene_vignettes": [
+      "a candlelit Finnish sauna interior with wooden walls and steam rising",
+      "a snowy Finnish forest at dusk with dark pine trees and low light",
+      "a fluorescent-lit Finnish supermarket aisle photo with linoleum floor and shelves of unlabeled products",
+      "a green grassy field with a Koskenkorva vodka bottle next to him",
+      "a kitchen counter with a plate of black salmiakki licorice candy",
+      "a wooden Finnish mökki cabin interior at night with a single oil lamp on a table",
+      "a winter scene with snow falling and a frozen lake behind him",
+      "a small rowboat on a still lake at midsummer with the sun barely below the horizon"
+    ],
+    "broken_observations": [
+      "a desk with a glowing CRT monitor showing a candlestick chart with squiggly red and green lines",
+      "a flat off-white background, spurdo holding a wooden sign that has nothing written on it",
+      "a beige room with a single chair, spurdo just standing there",
+      "a pixelated 2008-era webpage screenshot, spurdo pasted on top"
+    ],
+    "finnish_absurdity": [
+      "midsummer at 3am, sun barely below horizon, dim grey sky, lakeside",
+      "a Finnish supermarket with shelves of energy drinks, harsh fluorescent light",
+      "a wooden sauna bench with a Koskenkorva bottle and a single salmiakki candy",
+      "a dark kitchen at 4pm in winter, only a window letting in grey light"
+    ],
+    "gm_grin": [
+      "a Finnish kitchen window with weak morning sun, snow outside",
+      "a forest path at sunrise with low golden light",
+      "spurdo waking up in a wooden bed in a mökki, dim morning light"
+    ],
+    "gn_grin": [
+      "a starry winter sky over a frozen Finnish lake, no aurora",
+      "a single oil lamp burning out in a wooden cabin",
+      "spurdo tucked into a wooden bed with a knit blanket, dim moonlight"
+    ]
+  },
+  "hardExclusions": [
+    "Spurdo in any Nazi/SS/extremist uniform or with extremist symbols",
+    "Polished/vector/3D/anime/photorealistic Spurdo",
+    "Spurdo with modern photo filters (bloom, HDR, teal-orange grading)",
+    "Multiple Spurdos in one image (unless explicitly a comic panel)",
+    "Text, logos, or tickers inside images",
+    "Weapons or violence",
+    "Sexual or suggestive content",
+    "Real identifiable public figures",
+    "Copyrighted characters or branded IP"
+  ],
+  "visualCanonChecklist": [
+    "BROWN bear (not pink, not peach)",
+    "Two humps + V-crease at top of head (NOT pointy ears)",
+    "3-4 wavy forehead wrinkle lines",
+    "Plain black oval eyes, no highlights",
+    "Walrus-mustache muzzle (two cream/tan lobes)",
+    "Black oval nose centered between muzzle lobes",
+    "Pink open grinning mouth with visible zipper teeth",
+    "Bold black outline, MS Paint wobble"
+  ]
+}

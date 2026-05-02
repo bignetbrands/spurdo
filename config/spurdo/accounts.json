@@ -1,0 +1,16 @@
+{
+  "xHandle": "spurdo",
+  "xUserId": null,
+  "ogQuantsChatId": "g2007588413709664355",
+  "familyAccounts": [
+    { "handle": "lxpump", "label": "LX (operator)" },
+    { "handle": "etalienx", "label": "ET (sister token)" },
+    { "handle": "shilluminatism", "label": "shilluminati (sister token)" }
+  ],
+  "engagementRules": {
+    "replyToFamilyEachCycle": true,
+    "replyToMentionsAlways": true,
+    "engageBigAccountsOnMentions": true,
+    "raidModeRequiresOperatorToggle": true
+  }
+}
