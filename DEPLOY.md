@@ -65,10 +65,16 @@ Generate two strong random strings (32+ chars each) — anywhere works, e.g. `op
 
 | Var | Value |
 |---|---|
-| `ANTHROPIC_API_KEY` | `sk-ant-...` from console.anthropic.com |
-| `OPENAI_API_KEY` | `sk-proj-...` from platform.openai.com |
+| `ANTHROPIC_API_KEY` | `sk-ant-api03-...` from console.anthropic.com |
+| `OPENAI_API_KEY` | `sk-proj-...` from platform.openai.com (fallback only after M2 — Fal is primary) |
+| `FAL_KEY` | `xxx-xxx-xxx-xxx` from fal.ai/dashboard/keys (primary image gen) |
 
-**OpenAI org verification:** gpt-image-1 requires that your OpenAI org is verified. Go to platform.openai.com → **Settings → Organization → Verification** and complete it. Takes ~24h to approve. Without it, image gen returns a 403.
+**Fal.ai setup**:
+1. Sign up at [fal.ai](https://fal.ai)
+2. Add a payment method (their flux-lora endpoint runs ~$0.025-0.05/image — start with $5 credit)
+3. **Dashboard → Keys** → **Create new key** → copy and paste into Vercel as `FAL_KEY`
+
+**OpenAI org verification (only needed if using openai provider):** gpt-image-1 requires that your OpenAI org is verified. Go to platform.openai.com → **Settings → Organization → Verification** and complete it. Takes ~24h to approve. With Fal as primary, this is optional.
 
 ### X API credentials (Basic tier — paid, $200/mo)
 

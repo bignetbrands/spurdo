@@ -25,6 +25,7 @@ export async function GET(request: Request) {
       CRON_SECRET: !!process.env.CRON_SECRET,
       ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
       OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+      FAL_KEY: !!process.env.FAL_KEY,
       KV_REST_API_URL: !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL),
       KV_REST_API_TOKEN: !!(process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN),
       TWITTER_API_KEY: !!process.env.TWITTER_API_KEY,

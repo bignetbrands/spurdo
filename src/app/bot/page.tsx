@@ -3,48 +3,81 @@
 import { useState, useEffect, useCallback } from "react";
 
 // ============================================================
-// SPURDO BOT — Mission Control Dashboard (M1 skeleton)
+// SPURDO BOT — Mission Control Dashboard
 // ============================================================
-// M1 has: auth gate, status panel, kill switch toggle, log panel.
-// M2 will add: post panel, image gen, manual post.
-// M3 will add: cron + scheduler stats.
-// M4 will add: engagement panel.
-// M5 will polish.
+// M1: auth gate, status panel, kill switch
+// M2 (this commit): Compose panel — pick pillar, generate tweet + image
+// M3: scheduler stats, daily counts (TBD)
+// M4: mentions / reply queue (TBD)
+// M5: tools, meme test, raid mode toggle (TBD)
 // ============================================================
 
 type LogEntry = { time: string; msg: string; type: "info" | "success" | "error" | "warn" };
-type StatusData = {
+
+interface StatusData {
   timestamp: string;
   killSwitch: boolean;
-  config: {
-    project: string;
-    xHandle: string;
-    pillarsCount: number;
-    contractAddress: string;
-  };
+  config: { project: string; xHandle: string; pillarsCount: number; contractAddress: string };
   kvHealth: boolean;
   envCheck: Record<string, boolean>;
-};
+}
+
+interface PillarSummary {
+  id: string;
+  name: string;
+  description: string;
+  generateImage: boolean;
+  model: string;
+  dailyTarget: { min: number; max: number };
+}
+
+interface GenerateResponse {
+  ok: boolean;
+  tweet?: { text: string; pillar: string; model: string; tokensUsed: number; charCount: number };
+  image?: { url: string; provider: string; promptSent: string; elapsedMs: number };
+  imageError?: string;
+  totalElapsedMs?: number;
+  error?: string;
+}
 
 export default function BotDashboard() {
   const [secret, setSecret] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
   const [status, setStatus] = useState<StatusData | null>(null);
+  const [pillars, setPillars] = useState<PillarSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
+
+  // Compose state
+  const [selectedPillar, setSelectedPillar] = useState<string>("");
+  const [includeImage, setIncludeImage] = useState(true);
+  const [imageProvider, setImageProvider] = useState<"fal" | "openai">("fal");
+  const [composing, setComposing] = useState(false);
+  const [composeResult, setComposeResult] = useState<GenerateResponse | null>(null);
 
   const addLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
     setLog((prev) => [{ time, msg, type }, ...prev].slice(0, 50));
   }, []);
 
+  const authedFetch = useCallback(
+    async (url: string, init?: RequestInit) => {
+      return fetch(url, {
+        ...init,
+        headers: {
+          ...(init?.headers || {}),
+          Authorization: `Bearer ${secret}`,
+        },
+      });
+    },
+    [secret]
+  );
+
   const fetchStatus = useCallback(
     async (silent = false) => {
       setLoading(true);
       try {
-        const res = await fetch("/api/admin/status", {
-          headers: { Authorization: `Bearer ${secret}` },
-        });
+        const res = await authedFetch("/api/admin/status");
         if (res.status === 401) {
           setAuthenticated(false);
           if (!silent) addLog("auth failed — check the password", "error");
@@ -60,20 +93,29 @@ export default function BotDashboard() {
         setLoading(false);
       }
     },
-    [secret, addLog]
+    [authedFetch, addLog]
   );
+
+  const fetchPillars = useCallback(async () => {
+    try {
+      const res = await authedFetch("/api/admin/pillars");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { pillars: PillarSummary[] };
+      setPillars(data.pillars);
+      if (data.pillars.length && !selectedPillar) setSelectedPillar(data.pillars[0].id);
+    } catch (err) {
+      addLog(`pillars fetch failed: ${err instanceof Error ? err.message : err}`, "error");
+    }
+  }, [authedFetch, addLog, selectedPillar]);
 
   const toggleKillSwitch = useCallback(async () => {
     if (!status) return;
     const next = !status.killSwitch;
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/kill-switch", {
+      const res = await authedFetch("/api/admin/kill-switch", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${secret}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: next }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -84,14 +126,49 @@ export default function BotDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [status, secret, addLog, fetchStatus]);
+  }, [status, authedFetch, addLog, fetchStatus]);
+
+  const compose = useCallback(async () => {
+    if (!selectedPillar) {
+      addLog("pick a pillar first", "warn");
+      return;
+    }
+    setComposing(true);
+    setComposeResult(null);
+    addLog(`generating ${selectedPillar}${includeImage ? ` + image (${imageProvider})` : ""}…`, "info");
+    try {
+      const res = await authedFetch("/api/admin/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pillar: selectedPillar,
+          generateImage: includeImage,
+          imageProvider: imageProvider,
+        }),
+      });
+      const data = (await res.json()) as GenerateResponse;
+      setComposeResult(data);
+      if (!data.ok) {
+        addLog(`generation failed: ${data.error}`, "error");
+      } else {
+        const took = data.totalElapsedMs ? ` in ${(data.totalElapsedMs / 1000).toFixed(1)}s` : "";
+        addLog(`generated ${data.tweet?.charCount} chars${took}`, "success");
+        if (data.imageError) addLog(`image gen failed: ${data.imageError}`, "warn");
+      }
+    } catch (err) {
+      addLog(`compose error: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setComposing(false);
+    }
+  }, [selectedPillar, includeImage, imageProvider, authedFetch, addLog]);
 
   // Auto-poll status every 30s when authenticated
   useEffect(() => {
     if (!authenticated) return;
+    fetchPillars();
     const id = setInterval(() => fetchStatus(true), 30_000);
     return () => clearInterval(id);
-  }, [authenticated, fetchStatus]);
+  }, [authenticated, fetchStatus, fetchPillars]);
 
   // ────── AUTH GATE ──────
   if (!authenticated) {
@@ -132,6 +209,8 @@ export default function BotDashboard() {
   }
 
   // ────── DASHBOARD ──────
+  const selectedPillarObj = pillars.find((p) => p.id === selectedPillar);
+
   return (
     <div style={S.page}>
       <div style={S.container}>
@@ -142,6 +221,7 @@ export default function BotDashboard() {
           </span>
         </header>
 
+        {/* STATUS */}
         <section style={S.card}>
           <div style={S.cardHeader}>
             <h2 style={S.h2}>◈ STATUS</h2>
@@ -151,11 +231,7 @@ export default function BotDashboard() {
           </div>
           {status && (
             <div style={S.statusGrid}>
-              <Stat
-                label="kill switch"
-                value={status.killSwitch ? "ACTIVE — paused" : "off — running"}
-                good={!status.killSwitch}
-              />
+              <Stat label="kill switch" value={status.killSwitch ? "ACTIVE — paused" : "off — running"} good={!status.killSwitch} />
               <Stat label="kv health" value={status.kvHealth ? "ok" : "FAIL"} good={status.kvHealth} />
               <Stat label="pillars loaded" value={String(status.config.pillarsCount)} good={status.config.pillarsCount > 0} />
               <Stat label="ca" value={status.config.contractAddress} small />
@@ -175,6 +251,98 @@ export default function BotDashboard() {
           )}
         </section>
 
+        {/* COMPOSE — M2 */}
+        <section style={S.card}>
+          <h2 style={S.h2}>✏ COMPOSE</h2>
+          <p style={S.hint}>generate a tweet on demand. m2 doesnt post — just preview. m3 will wire posting.</p>
+
+          <div style={S.composeForm}>
+            <label style={S.label}>
+              pillar
+              <select
+                value={selectedPillar}
+                onChange={(e) => setSelectedPillar(e.target.value)}
+                disabled={composing}
+                style={S.select}
+              >
+                {pillars.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.id})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {selectedPillarObj && (
+              <div style={S.pillarBlurb}>
+                <em>{selectedPillarObj.description}</em>
+              </div>
+            )}
+
+            <div style={S.composeOpts}>
+              <label style={S.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={includeImage}
+                  onChange={(e) => setIncludeImage(e.target.checked)}
+                  disabled={composing}
+                />
+                generate image
+              </label>
+
+              <label style={S.label}>
+                provider
+                <select
+                  value={imageProvider}
+                  onChange={(e) => setImageProvider(e.target.value as "fal" | "openai")}
+                  disabled={composing || !includeImage}
+                  style={S.selectInline}
+                >
+                  <option value="fal">fal (FLUX) — cheap, fast</option>
+                  <option value="openai">openai (gpt-image-1) — fallback</option>
+                </select>
+              </label>
+            </div>
+
+            <button onClick={compose} disabled={composing || !selectedPillar} style={S.btnPrimary}>
+              {composing ? "🌀 generatin..." : "✨ generate"}
+            </button>
+          </div>
+
+          {composeResult && composeResult.ok && composeResult.tweet && (
+            <div style={S.composeResult}>
+              <div style={S.tweetPreview}>
+                <div style={S.tweetText}>{composeResult.tweet.text}</div>
+                <div style={S.tweetMeta}>
+                  {composeResult.tweet.charCount}/280 chars · {composeResult.tweet.model} · {composeResult.tweet.tokensUsed} tokens
+                  {composeResult.totalElapsedMs ? ` · ${(composeResult.totalElapsedMs / 1000).toFixed(1)}s total` : ""}
+                </div>
+              </div>
+
+              {composeResult.image && (
+                <div style={S.imgPreview}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={composeResult.image.url} alt="generated" style={S.imgThumb} />
+                  <div style={S.tweetMeta}>
+                    via {composeResult.image.provider} · {(composeResult.image.elapsedMs / 1000).toFixed(1)}s
+                  </div>
+                </div>
+              )}
+
+              {composeResult.imageError && (
+                <div style={{ ...S.envItem, color: "#c92020", padding: 8 }}>image error: {composeResult.imageError}</div>
+              )}
+            </div>
+          )}
+
+          {composeResult && !composeResult.ok && (
+            <div style={{ ...S.envItem, color: "#c92020", padding: 12, background: "#ffeaea" }}>
+              {composeResult.error || "unknown error"}
+            </div>
+          )}
+        </section>
+
+        {/* CONTROLS */}
         <section style={S.card}>
           <h2 style={S.h2}>⚙ CONTROLS</h2>
           <div style={S.controlsRow}>
@@ -186,21 +354,10 @@ export default function BotDashboard() {
               {status?.killSwitch ? "▶ resume spurdo" : "⏸ pause spurdo (kill switch)"}
             </button>
           </div>
-          <p style={S.hint}>
-            kill switch halts all crons. use it before deploys, when something looks weird, or when da bear has had enough :D
-          </p>
+          <p style={S.hint}>kill switch halts all crons. use it before deploys, when something looks weird :D</p>
         </section>
 
-        <section style={S.card}>
-          <h2 style={S.h2}>🚧 COMING IN M2-M5</h2>
-          <ul style={S.todoList}>
-            <li>M2 — manual post composer with image gen + preview</li>
-            <li>M3 — cron stats, scheduler decisions, daily counts</li>
-            <li>M4 — mention queue, reply preview, family-account engage</li>
-            <li>M5 — meme test, thread analyzer, raid mode toggle, polish</li>
-          </ul>
-        </section>
-
+        {/* LOG */}
         <section style={S.card}>
           <h2 style={S.h2}>📜 LOG</h2>
           <div style={S.logPanel}>
@@ -217,24 +374,14 @@ export default function BotDashboard() {
         </section>
 
         <footer style={S.footer}>
-          spurdo bot · M1 skeleton · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
+          spurdo bot · M2: compose · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
         </footer>
       </div>
     </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  good,
-  small,
-}: {
-  label: string;
-  value: string;
-  good?: boolean;
-  small?: boolean;
-}) {
+function Stat({ label, value, good, small }: { label: string; value: string; good?: boolean; small?: boolean }) {
   return (
     <div style={S.stat}>
       <div style={S.statLabel}>{label}</div>
@@ -256,43 +403,15 @@ function typeColor(t: LogEntry["type"]): string {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "#f5e9c9",
-    fontFamily: '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive',
-    color: "#1a1a1a",
-    padding: "24px 16px",
-  },
+  page: { minHeight: "100vh", background: "#f5e9c9", fontFamily: '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive', color: "#1a1a1a", padding: "24px 16px" },
   container: { maxWidth: 920, margin: "0 auto" },
-  authBox: {
-    maxWidth: 460,
-    margin: "80px auto",
-    padding: "32px 28px",
-    background: "#fffbea",
-    border: "3px solid #1a1a1a",
-    boxShadow: "6px 6px 0 #1a1a1a",
-  },
+  authBox: { maxWidth: 460, margin: "80px auto", padding: "32px 28px", background: "#fffbea", border: "3px solid #1a1a1a", boxShadow: "6px 6px 0 #1a1a1a" },
   authAscii: { fontFamily: "monospace", fontSize: 12, lineHeight: 1.3, marginBottom: 20, color: "#5a3820" },
-  input: {
-    width: "100%",
-    padding: "12px 14px",
-    border: "3px solid #1a1a1a",
-    background: "#fff",
-    fontFamily: "monospace",
-    fontSize: 14,
-    marginBottom: 12,
-    boxSizing: "border-box",
-  },
+  input: { width: "100%", padding: "12px 14px", border: "3px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 14, marginBottom: 12, boxSizing: "border-box" },
   header: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 8 },
   h1: { fontSize: 26, margin: 0 },
   headerMeta: { fontSize: 13, color: "#5a3820" },
-  card: {
-    background: "#fffbea",
-    border: "3px solid #1a1a1a",
-    boxShadow: "4px 4px 0 #1a1a1a",
-    padding: 20,
-    marginBottom: 16,
-  },
+  card: { background: "#fffbea", border: "3px solid #1a1a1a", boxShadow: "4px 4px 0 #1a1a1a", padding: 20, marginBottom: 16 },
   cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   h2: { fontSize: 16, margin: 0, letterSpacing: 1 },
   statusGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginTop: 12 },
@@ -304,56 +423,28 @@ const S: Record<string, React.CSSProperties> = {
   envBoxGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 4, fontFamily: "monospace", fontSize: 12 },
   envItem: { padding: "2px 0" },
   controlsRow: { display: "flex", gap: 10, flexWrap: "wrap" },
-  btnPrimary: {
-    width: "100%",
-    padding: "12px 18px",
-    border: "3px solid #1a1a1a",
-    background: "#ffe066",
-    fontFamily: "inherit",
-    fontSize: 16,
-    cursor: "pointer",
-    boxShadow: "3px 3px 0 #1a1a1a",
-  },
-  btnGhost: {
-    padding: "6px 12px",
-    border: "2px solid #1a1a1a",
-    background: "#fff",
-    fontFamily: "inherit",
-    fontSize: 13,
-    cursor: "pointer",
-  },
-  btnDanger: {
-    padding: "12px 18px",
-    border: "3px solid #1a1a1a",
-    background: "#e94b3c",
-    color: "#fff",
-    fontFamily: "inherit",
-    fontSize: 15,
-    cursor: "pointer",
-    boxShadow: "3px 3px 0 #1a1a1a",
-  },
-  btnSuccess: {
-    padding: "12px 18px",
-    border: "3px solid #1a1a1a",
-    background: "#8cc968",
-    fontFamily: "inherit",
-    fontSize: 15,
-    cursor: "pointer",
-    boxShadow: "3px 3px 0 #1a1a1a",
-  },
+  btnPrimary: { width: "100%", padding: "12px 18px", border: "3px solid #1a1a1a", background: "#ffe066", fontFamily: "inherit", fontSize: 16, cursor: "pointer", boxShadow: "3px 3px 0 #1a1a1a" },
+  btnGhost: { padding: "6px 12px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "inherit", fontSize: 13, cursor: "pointer" },
+  btnDanger: { padding: "12px 18px", border: "3px solid #1a1a1a", background: "#e94b3c", color: "#fff", fontFamily: "inherit", fontSize: 15, cursor: "pointer", boxShadow: "3px 3px 0 #1a1a1a" },
+  btnSuccess: { padding: "12px 18px", border: "3px solid #1a1a1a", background: "#8cc968", fontFamily: "inherit", fontSize: 15, cursor: "pointer", boxShadow: "3px 3px 0 #1a1a1a" },
   hint: { fontSize: 12, color: "#5a3820", marginTop: 10, fontStyle: "italic" },
-  todoList: { fontSize: 13, color: "#5a3820", paddingLeft: 20, marginTop: 8 },
-  logPanel: {
-    background: "#f8f0d5",
-    border: "2px solid #1a1a1a",
-    padding: 10,
-    fontFamily: "monospace",
-    fontSize: 12,
-    maxHeight: 220,
-    overflow: "auto",
-  },
+  logPanel: { background: "#f8f0d5", border: "2px solid #1a1a1a", padding: 10, fontFamily: "monospace", fontSize: 12, maxHeight: 220, overflow: "auto" },
   logEntry: { padding: "2px 0", lineHeight: 1.4 },
   logTime: { color: "#888", marginRight: 6 },
   logEmpty: { color: "#888", fontStyle: "italic" },
   footer: { textAlign: "center", fontSize: 12, color: "#888", marginTop: 24, fontFamily: "monospace" },
+  // M2 compose-specific styles
+  composeForm: { display: "flex", flexDirection: "column", gap: 12 },
+  label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", fontWeight: 700 },
+  select: { padding: "10px 12px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 14, cursor: "pointer" },
+  selectInline: { padding: "6px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer", marginLeft: 8 },
+  pillarBlurb: { fontSize: 13, color: "#5a3820", padding: "8px 12px", background: "#f5e9c9", border: "2px dashed #1a1a1a" },
+  composeOpts: { display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" },
+  checkboxLabel: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820" },
+  composeResult: { marginTop: 16, display: "flex", flexDirection: "column", gap: 12 },
+  tweetPreview: { padding: 14, background: "#f8f0d5", border: "2px solid #1a1a1a" },
+  tweetText: { fontSize: 16, whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: 8 },
+  tweetMeta: { fontFamily: "monospace", fontSize: 11, color: "#888", marginTop: 6 },
+  imgPreview: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
+  imgThumb: { maxWidth: "100%", maxHeight: 480, border: "3px solid #1a1a1a", boxShadow: "4px 4px 0 #1a1a1a" },
 };
