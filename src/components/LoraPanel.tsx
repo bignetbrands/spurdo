@@ -52,11 +52,12 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
   const [loadingRegistry, setLoadingRegistry] = useState(false);
 
   // Training form state
-  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [steps, setSteps] = useState(1000);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchRegistry = useCallback(async () => {
@@ -121,15 +122,20 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
 
   // ── Submit training ──
   const submitTraining = useCallback(async () => {
-    if (!zipFile) {
-      addLog("pick a .zip file first", "warn");
+    if (imageFiles.length === 0) {
+      addLog("pick some images first :D", "warn");
       return;
     }
+    if (imageFiles.length < 5) {
+      addLog(`need at least 5 images for a useful LoRA (you have ${imageFiles.length})`, "warn");
+      return;
+    }
+    const totalMB = imageFiles.reduce((s, f) => s + f.size, 0) / 1024 / 1024;
     setSubmitting(true);
-    addLog(`uploading ${zipFile.name} (${(zipFile.size / 1024 / 1024).toFixed(2)} MB)…`);
+    addLog(`uploading ${imageFiles.length} image${imageFiles.length === 1 ? "" : "s"} (${totalMB.toFixed(1)} MB total)…`);
     try {
       const form = new FormData();
-      form.append("zip", zipFile);
+      for (const f of imageFiles) form.append("images", f);
       form.append("steps", String(steps));
       if (notes.trim()) form.append("notes", notes.trim());
 
@@ -151,20 +157,20 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         submittedAt: new Date().toISOString(),
         trainingSteps: steps,
         notes: notes.trim() || undefined,
-        trainingSetFilename: zipFile.name,
+        trainingSetFilename: `${imageFiles.length} images`,
       };
       setActiveJob(initialJob);
       startPolling(data.jobId);
 
       // Reset form fields
-      setZipFile(null);
+      setImageFiles([]);
       setNotes("");
     } catch (err) {
       addLog(`training submit error: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setSubmitting(false);
     }
-  }, [zipFile, steps, notes, authedFetch, addLog, startPolling]);
+  }, [imageFiles, steps, notes, authedFetch, addLog, startPolling]);
 
   // ── Registry actions ──
   const setActive = useCallback(
@@ -228,26 +234,75 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
     <section style={S.card}>
       <h2 style={S.h2}>🧠 LORA TRAINING</h2>
       <p style={S.hint}>
-        train a Spurdo identity adapter on Fal. drop a zip of 10-20 on-canon images. takes ~10-15 min. trained LoRAs go to the registry below — click set active to use one.
+        train a Spurdo identity adapter on Fal. drop 10-20 on-canon images. takes ~10-15 min. trained LoRAs go to the registry below — click set active to use one.
       </p>
 
       {/* TRAIN FORM */}
       <div style={S.form}>
-        <label style={S.label}>
-          training set (.zip)
+        <label style={S.label}>training images (10-20 recommended)</label>
+        <div
+          style={{ ...S.dropzone, ...(dragActive ? S.dropzoneActive : {}) }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragActive(false);
+            const dropped = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+            if (dropped.length > 0) {
+              setImageFiles((prev) => [...prev, ...dropped].slice(0, 30));
+            }
+          }}
+        >
           <input
             type="file"
-            accept=".zip,application/zip"
-            onChange={(e) => setZipFile(e.target.files?.[0] || null)}
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            id="lora-image-input"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files || []);
+              if (picked.length > 0) {
+                setImageFiles((prev) => [...prev, ...picked].slice(0, 30));
+              }
+              // Reset so the same file can be re-picked after removal
+              e.target.value = "";
+            }}
             disabled={submitting || !!isTraining}
-            style={S.fileInput}
+            style={{ display: "none" }}
           />
-          {zipFile && (
-            <div style={S.hint}>
-              {zipFile.name} · {(zipFile.size / 1024 / 1024).toFixed(2)} MB
+          <label htmlFor="lora-image-input" style={S.dropzoneLabel}>
+            <div style={S.dropzoneText}>
+              {imageFiles.length === 0 ? (
+                <>
+                  <strong>click to pick</strong> or <strong>drop images here</strong>
+                  <div style={S.dropzoneHint}>png · jpg · webp · up to 30 files · 100 MB total</div>
+                </>
+              ) : (
+                <>
+                  <strong>{imageFiles.length} image{imageFiles.length === 1 ? "" : "s"} ready</strong>
+                  <div style={S.dropzoneHint}>
+                    {(imageFiles.reduce((s, f) => s + f.size, 0) / 1024 / 1024).toFixed(1)} MB total · click to add more
+                  </div>
+                </>
+              )}
             </div>
-          )}
-        </label>
+          </label>
+        </div>
+
+        {imageFiles.length > 0 && (
+          <div style={S.thumbGrid}>
+            {imageFiles.map((f, i) => (
+              <ImageThumb
+                key={`${f.name}-${i}`}
+                file={f}
+                onRemove={() => setImageFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                disabled={submitting || !!isTraining}
+              />
+            ))}
+          </div>
+        )}
 
         <div style={S.formRow}>
           <label style={S.label}>
@@ -278,10 +333,10 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
 
         <button
           onClick={submitTraining}
-          disabled={!zipFile || submitting || !!isTraining}
+          disabled={imageFiles.length === 0 || submitting || !!isTraining}
           style={S.btnPrimary}
         >
-          {submitting ? "🌀 uploading…" : isTraining ? "training in progress…" : "🚀 start training"}
+          {submitting ? "🌀 uploading…" : isTraining ? "training in progress…" : `🚀 train on ${imageFiles.length || "?"} image${imageFiles.length === 1 ? "" : "s"}`}
         </button>
       </div>
 
@@ -374,6 +429,37 @@ function statusColor(s: ActiveJob["status"]): string {
   return "#444";
 }
 
+function ImageThumb({ file, onRemove, disabled }: { file: File; onRemove: () => void; disabled: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  return (
+    <div style={S.thumb}>
+      {url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={file.name} style={S.thumbImg} />
+      )}
+      <div style={S.thumbName} title={file.name}>
+        {file.name.length > 20 ? file.name.slice(0, 17) + "…" : file.name}
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={disabled}
+        style={S.thumbRemove}
+        aria-label={`Remove ${file.name}`}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 const S: Record<string, React.CSSProperties> = {
   card: { background: "#fffbea", border: "3px solid #1a1a1a", boxShadow: "4px 4px 0 #1a1a1a", padding: 20, marginBottom: 16 },
   cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -384,6 +470,23 @@ const S: Record<string, React.CSSProperties> = {
   formRow: { display: "flex", gap: 12 },
   label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", fontWeight: 700 },
   fileInput: { padding: 8, border: "2px dashed #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer" },
+  dropzone: {
+    border: "3px dashed #1a1a1a",
+    background: "#fffbea",
+    padding: 24,
+    textAlign: "center",
+    cursor: "pointer",
+    transition: "background 0.15s, border-color 0.15s",
+  },
+  dropzoneActive: { background: "#fff3b0", borderColor: "#a06800", borderStyle: "solid" },
+  dropzoneLabel: { display: "block", cursor: "pointer", width: "100%" },
+  dropzoneText: { fontSize: 14, color: "#1a1a1a" },
+  dropzoneHint: { fontSize: 11, color: "#5a3820", marginTop: 6, fontFamily: "monospace", fontStyle: "italic" },
+  thumbGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8, marginTop: 4 },
+  thumb: { position: "relative", border: "2px solid #1a1a1a", background: "#fff", padding: 4, display: "flex", flexDirection: "column", gap: 4 },
+  thumbImg: { width: "100%", height: 100, objectFit: "cover", display: "block" },
+  thumbName: { fontFamily: "monospace", fontSize: 10, color: "#5a3820", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  thumbRemove: { position: "absolute", top: -8, right: -8, width: 22, height: 22, padding: 0, borderRadius: "50%", border: "2px solid #1a1a1a", background: "#e94b3c", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", boxShadow: "1px 1px 0 #1a1a1a" },
   input: { padding: "8px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 13 },
   btnPrimary: { padding: "12px 18px", border: "3px solid #1a1a1a", background: "#ffe066", fontFamily: "inherit", fontSize: 15, cursor: "pointer", boxShadow: "3px 3px 0 #1a1a1a" },
   btnGhost: { padding: "4px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "inherit", fontSize: 12, cursor: "pointer" },
