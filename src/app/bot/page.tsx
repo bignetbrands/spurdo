@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { LoraPanel } from "@/components/LoraPanel";
 
 // ============================================================
 // SPURDO BOT — Mission Control Dashboard
 // ============================================================
 // M1: auth gate, status panel, kill switch
-// M2 (this commit): Compose panel — pick pillar, generate tweet + image
+// M2: Compose panel — pick pillar, generate tweet + image
+// M2.5 (this commit): LoRA training UI — train, registry, set active
 // M3: scheduler stats, daily counts (TBD)
 // M4: mentions / reply queue (TBD)
 // M5: tools, meme test, raid mode toggle (TBD)
@@ -19,6 +21,7 @@ interface StatusData {
   killSwitch: boolean;
   config: { project: string; xHandle: string; pillarsCount: number; contractAddress: string };
   kvHealth: boolean;
+  activeLora?: { url: string } | null;
   envCheck: Record<string, boolean>;
 }
 
@@ -234,6 +237,7 @@ export default function BotDashboard() {
               <Stat label="kill switch" value={status.killSwitch ? "ACTIVE — paused" : "off — running"} good={!status.killSwitch} />
               <Stat label="kv health" value={status.kvHealth ? "ok" : "FAIL"} good={status.kvHealth} />
               <Stat label="pillars loaded" value={String(status.config.pillarsCount)} good={status.config.pillarsCount > 0} />
+              <Stat label="active lora" value={status.activeLora ? "set" : "base flux"} good={!!status.activeLora} small={false} />
               <Stat label="ca" value={status.config.contractAddress} small />
             </div>
           )}
@@ -342,6 +346,9 @@ export default function BotDashboard() {
           )}
         </section>
 
+        {/* LORA — M2.5 */}
+        <LoraPanel authedFetch={authedFetch} addLog={addLog} />
+
         {/* CONTROLS */}
         <section style={S.card}>
           <h2 style={S.h2}>⚙ CONTROLS</h2>
@@ -374,7 +381,7 @@ export default function BotDashboard() {
         </section>
 
         <footer style={S.footer}>
-          spurdo bot · M2: compose · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
+          spurdo bot · M2.5: lora · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
         </footer>
       </div>
     </div>

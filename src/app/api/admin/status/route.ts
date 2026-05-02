@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/auth";
 import { loadConfig } from "@/lib/config";
 import { isKillSwitchActive, kvHealthCheck } from "@/lib/store";
+import { getActiveLoraUrl } from "@/lib/lora";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,11 @@ export async function GET(request: Request) {
 
   try {
     const cfg = loadConfig();
-    const [killSwitch, kvHealth] = await Promise.all([isKillSwitchActive(), kvHealthCheck()]);
+    const [killSwitch, kvHealth, activeLora] = await Promise.all([
+      isKillSwitchActive(),
+      kvHealthCheck(),
+      getActiveLoraUrl().catch(() => null),
+    ]);
 
     // Surface which secrets are present (booleans only — never the values)
     const envCheck = {
@@ -39,6 +44,7 @@ export async function GET(request: Request) {
       timestamp: new Date().toISOString(),
       killSwitch,
       kvHealth,
+      activeLora: activeLora ? { url: activeLora } : null,
       config: {
         project: cfg.projectId,
         xHandle: cfg.accounts.xHandle,

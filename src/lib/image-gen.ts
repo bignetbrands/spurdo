@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { loadConfig } from "./config";
 import { buildImagePrompt } from "./prompts";
+import { getActiveLoraUrl } from "./lora";
 import type { PillarId } from "@/types";
 
 // ============================================================
@@ -63,7 +64,21 @@ export async function generateImage(
   const startTime = Date.now();
 
   if (requested === "fal") {
-    const loraUrl = opts.loraUrl || process.env.SPURDO_LORA_URL || cfg.imagePrompts.referenceImage; // referenceImage as a placeholder
+    // LoRA URL resolution priority:
+    //   1. Explicit option passed in (caller override)
+    //   2. Active LoRA from KV registry (set via /bot dashboard)
+    //   3. SPURDO_LORA_URL env var (manual override)
+    //   4. None — runs on FLUX base
+    let loraUrl: string | null | undefined = opts.loraUrl;
+    if (!loraUrl) {
+      try {
+        loraUrl = await getActiveLoraUrl();
+      } catch {
+        // KV unavailable — fall through to env var
+      }
+    }
+    if (!loraUrl) loraUrl = process.env.SPURDO_LORA_URL || null;
+
     const result = await generateViaFal(fullPrompt, loraUrl, opts.loraScale ?? 1.0);
     return { ...result, promptSent: fullPrompt, elapsedMs: Date.now() - startTime };
   }
