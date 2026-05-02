@@ -3,6 +3,7 @@ import { checkAdminAuth } from "@/lib/auth";
 import { loadConfig } from "@/lib/config";
 import { isKillSwitchActive, kvHealthCheck } from "@/lib/store";
 import { getActiveLoraUrl } from "@/lib/lora";
+import { getBudgetStatus } from "@/lib/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +19,11 @@ export async function GET(request: Request) {
 
   try {
     const cfg = loadConfig();
-    const [killSwitch, kvHealth, activeLora] = await Promise.all([
+    const [killSwitch, kvHealth, activeLora, budget] = await Promise.all([
       isKillSwitchActive(),
       kvHealthCheck(),
       getActiveLoraUrl().catch(() => null),
+      getBudgetStatus().catch(() => null),
     ]);
 
     // Surface which secrets are present (booleans only — never the values)
@@ -45,6 +47,7 @@ export async function GET(request: Request) {
       killSwitch,
       kvHealth,
       activeLora: activeLora ? { url: activeLora } : null,
+      budget,
       config: {
         project: cfg.projectId,
         xHandle: cfg.accounts.xHandle,

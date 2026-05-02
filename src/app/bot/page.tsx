@@ -8,7 +8,8 @@ import { LoraPanel } from "@/components/LoraPanel";
 // ============================================================
 // M1: auth gate, status panel, kill switch
 // M2: Compose panel — pick pillar, generate tweet + image
-// M2.5 (this commit): LoRA training UI — train, registry, set active
+// M2.5: LoRA training UI — train, registry, set active
+// M2.6 (this commit): resilience — daily budget, retries, rate limits
 // M3: scheduler stats, daily counts (TBD)
 // M4: mentions / reply queue (TBD)
 // M5: tools, meme test, raid mode toggle (TBD)
@@ -22,6 +23,12 @@ interface StatusData {
   config: { project: string; xHandle: string; pillarsCount: number; contractAddress: string };
   kvHealth: boolean;
   activeLora?: { url: string } | null;
+  budget?: {
+    images: { used: number; limit: number; remaining: number };
+    tokens: { used: number; limit: number; remaining: number };
+    date: string;
+    overridden: boolean;
+  } | null;
   envCheck: Record<string, boolean>;
 }
 
@@ -241,6 +248,15 @@ export default function BotDashboard() {
               <Stat label="ca" value={status.config.contractAddress} small />
             </div>
           )}
+          {status?.budget && (
+            <div style={S.budgetBox}>
+              <div style={S.envBoxTitle}>today&apos;s budget · {status.budget.date}{status.budget.overridden ? " · OVERRIDDEN" : ""}</div>
+              <div style={S.budgetGrid}>
+                <BudgetBar label="images" used={status.budget.images.used} limit={status.budget.images.limit} />
+                <BudgetBar label="tokens" used={status.budget.tokens.used} limit={status.budget.tokens.limit} />
+              </div>
+            </div>
+          )}
           {status && (
             <div style={S.envBox}>
               <div style={S.envBoxTitle}>env vars</div>
@@ -381,7 +397,7 @@ export default function BotDashboard() {
         </section>
 
         <footer style={S.footer}>
-          spurdo bot · M2.5: lora · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
+          spurdo bot · M2.6: resilience · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
         </footer>
       </div>
     </div>
@@ -400,6 +416,25 @@ function Stat({ label, value, good, small }: { label: string; value: string; goo
         }}
       >
         {value}
+      </div>
+    </div>
+  );
+}
+
+function BudgetBar({ label, used, limit }: { label: string; used: number; limit: number }) {
+  const pct = limit === 0 ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  // Color: green < 60%, amber 60-90%, red 90%+
+  const color = pct >= 90 ? "#c92020" : pct >= 60 ? "#a06800" : "#0a8c3a";
+  return (
+    <div style={S.budgetItem}>
+      <div style={S.budgetItemHeader}>
+        <span style={{ fontWeight: 700, textTransform: "lowercase" }}>{label}</span>
+        <span style={{ fontFamily: "monospace", fontSize: 11, color }}>
+          {used.toLocaleString()} / {limit.toLocaleString()} ({pct}%)
+        </span>
+      </div>
+      <div style={S.budgetBarTrack}>
+        <div style={{ ...S.budgetBarFill, width: `${pct}%`, background: color }} />
       </div>
     </div>
   );
@@ -426,6 +461,12 @@ const S: Record<string, React.CSSProperties> = {
   statLabel: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", marginBottom: 4 },
   statValue: { fontSize: 16, fontWeight: 700 },
   envBox: { marginTop: 12, padding: 12, background: "#f5e9c9", border: "2px solid #1a1a1a" },
+  budgetBox: { marginTop: 12, padding: 12, background: "#f5e9c9", border: "2px solid #1a1a1a" },
+  budgetGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 },
+  budgetItem: { display: "flex", flexDirection: "column", gap: 4 },
+  budgetItemHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 12 },
+  budgetBarTrack: { height: 8, background: "#fff", border: "1px solid #1a1a1a", overflow: "hidden" },
+  budgetBarFill: { height: "100%", transition: "width 0.3s" },
   envBoxTitle: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, color: "#5a3820" },
   envBoxGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 4, fontFamily: "monospace", fontSize: 12 },
   envItem: { padding: "2px 0" },

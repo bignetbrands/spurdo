@@ -27,6 +27,11 @@ export interface PillarsConfig {
     dailyTweetTarget: { min: number; max: number };
     gapMinutes: Record<TimeOfDay, { min: number; max: number }>;
   };
+  dailyLimits?: {
+    images: number;
+    anthropicTokens: number;
+    comment?: string;
+  };
 }
 
 export interface VoiceConfig {
@@ -61,7 +66,6 @@ export interface VoiceConfig {
 }
 
 export interface ImagePromptsConfig {
-  referenceImage: string;
   model: string;
   size: string;
   quality: "low" | "medium" | "high";

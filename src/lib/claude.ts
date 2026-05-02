@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config";
 import { buildSystemPrompt, buildTweetPrompt, timeOfDayUTC } from "./prompts";
+import { assertTokenBudget, recordTokenSpend } from "./budget";
 import type { PillarId } from "@/types";
 
 // ============================================================
@@ -27,6 +28,7 @@ function getClient(): Anthropic {
 /**
  * Generate a tweet for a given pillar.
  * Returns just the tweet text (cleaned of quotes/whitespace).
+ * Throws BudgetExceededError if daily token cap reached.
  */
 export async function generateTweet(
   pillarId: PillarId,
@@ -35,6 +37,8 @@ export async function generateTweet(
     timeOfDay?: ReturnType<typeof timeOfDayUTC>;
   } = {}
 ): Promise<{ text: string; pillar: PillarId; model: string; tokensUsed: number }> {
+  await assertTokenBudget();
+
   const cfg = loadConfig();
   const pillar = cfg.pillars.pillars[pillarId];
   if (!pillar) throw new Error(`Unknown pillar: ${pillarId}`);
@@ -56,14 +60,18 @@ export async function generateTweet(
 
   const block = response.content[0];
   const raw = block.type === "text" ? block.text : "";
-
   const cleaned = cleanTweetText(raw);
+  const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
+
+  await recordTokenSpend(tokensUsed).catch(() => {
+    /* don't fail if KV write fails */
+  });
 
   return {
     text: cleaned,
     pillar: pillarId,
     model,
-    tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
+    tokensUsed,
   };
 }
 

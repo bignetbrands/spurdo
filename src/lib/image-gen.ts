@@ -5,6 +5,8 @@ import path from "path";
 import { loadConfig } from "./config";
 import { buildImagePrompt } from "./prompts";
 import { getActiveLoraUrl } from "./lora";
+import { assertImageBudget, recordImageSpend } from "./budget";
+import { retryWithBackoff } from "./retry";
 import type { PillarId } from "@/types";
 
 // ============================================================
@@ -53,16 +55,20 @@ export interface GenerateImageResult {
 
 /**
  * Generate an image. Routes to the configured provider.
+ * Throws BudgetExceededError if the daily image cap has been reached.
  */
 export async function generateImage(
   opts: GenerateImageOptions
 ): Promise<GenerateImageResult> {
+  await assertImageBudget(); // will throw if cap reached
+
   const cfg = loadConfig();
   const requested = opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
 
   const fullPrompt = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
   const startTime = Date.now();
 
+  let result: { imageUrl: string; provider: ImageProvider };
   if (requested === "fal") {
     // LoRA URL resolution priority:
     //   1. Explicit option passed in (caller override)
@@ -79,12 +85,16 @@ export async function generateImage(
     }
     if (!loraUrl) loraUrl = process.env.SPURDO_LORA_URL || null;
 
-    const result = await generateViaFal(fullPrompt, loraUrl, opts.loraScale ?? 1.0);
-    return { ...result, promptSent: fullPrompt, elapsedMs: Date.now() - startTime };
+    result = await generateViaFal(fullPrompt, loraUrl, opts.loraScale ?? 1.0);
+  } else {
+    result = await generateViaOpenAI(fullPrompt);
   }
 
-  // OpenAI fallback
-  const result = await generateViaOpenAI(fullPrompt, cfg.imagePrompts.referenceImage);
+  // Record after success — failed gens don't count against budget
+  await recordImageSpend(1).catch(() => {
+    /* don't fail the call if KV write fails */
+  });
+
   return { ...result, promptSent: fullPrompt, elapsedMs: Date.now() - startTime };
 }
 
@@ -126,10 +136,19 @@ async function generateViaFal(
     input.loras = [{ path: loraUrl, scale: loraScale }];
   }
 
-  const result = await fal.subscribe("fal-ai/flux-lora", {
-    input: input as Parameters<typeof fal.subscribe<"fal-ai/flux-lora">>[1]["input"],
-    logs: false,
-  });
+  const { result } = await retryWithBackoff(
+    () =>
+      fal.subscribe("fal-ai/flux-lora", {
+        input: input as Parameters<typeof fal.subscribe<"fal-ai/flux-lora">>[1]["input"],
+        logs: false,
+      }),
+    {
+      maxAttempts: 3,
+      initialDelayMs: 1500,
+      onRetry: (attempt, err) =>
+        console.warn(`[image-gen/fal] retry ${attempt} after error:`, err instanceof Error ? err.message : err),
+    }
+  );
   const data = result.data as { images?: Array<{ url: string }> };
   const url = data.images?.[0]?.url;
   if (!url) throw new Error("Fal returned no image URL");
@@ -152,21 +171,27 @@ function getOpenAI(): OpenAI {
 }
 
 async function generateViaOpenAI(
-  prompt: string,
-  referenceImageName: string
+  prompt: string
 ): Promise<{ imageUrl: string; provider: ImageProvider }> {
-  // Try to read the reference image from /public — if it doesn't exist,
-  // fall back to images.generate without a reference (DALL-E style).
+  // Try to read the project's primary character image from /public
+  // (we use spurdo.png as a sensible default; projects can override
+  // by placing their character file at /public/character-reference.png)
+  const referenceCandidates = ["character-reference.png", "spurdo.png"];
   let refBuffer: Buffer | null = null;
-  try {
-    const refPath = path.join(process.cwd(), "public", referenceImageName);
-    refBuffer = fs.readFileSync(refPath);
-  } catch {
-    // Reference image missing — generate without one
+  let refName: string | null = null;
+  for (const candidate of referenceCandidates) {
+    try {
+      const refPath = path.join(process.cwd(), "public", candidate);
+      refBuffer = fs.readFileSync(refPath);
+      refName = candidate;
+      break;
+    } catch {
+      // try next
+    }
   }
 
-  if (refBuffer) {
-    const refFile = await toFile(refBuffer, referenceImageName, { type: "image/png" });
+  if (refBuffer && refName) {
+    const refFile = await toFile(refBuffer, refName, { type: "image/png" });
     const response = await (getOpenAI().images.edit as unknown as (args: unknown) => Promise<{
       data?: Array<{ b64_json?: string; url?: string }>;
     }>)({

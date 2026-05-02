@@ -3,10 +3,16 @@ import { checkAdminAuth } from "@/lib/auth";
 import { loadConfig } from "@/lib/config";
 import { generateTweet } from "@/lib/claude";
 import { generateImage } from "@/lib/image-gen";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { BudgetExceededError } from "@/lib/budget";
 import type { PillarId } from "@/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// Rate limit: 10 generates per minute, configurable via env
+const GENERATE_PER_MINUTE = parseInt(process.env.GENERATE_RATE_PER_MINUTE || "10", 10);
+const GENERATE_WINDOW_SECONDS = 60;
 
 interface GenerateRequest {
   pillar: PillarId;
@@ -48,6 +54,24 @@ interface GenerateResponse {
 export async function POST(request: Request) {
   const unauthorized = checkAdminAuth(request);
   if (unauthorized) return unauthorized;
+
+  // Rate limit: prevent spend runaway from a stuck retry loop or leaked secret
+  try {
+    const limit = await checkRateLimit("generate:global", GENERATE_PER_MINUTE, GENERATE_WINDOW_SECONDS);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `rate limit hit (${limit.count}/${limit.limit} per minute). retry in ${limit.retryAfterSeconds}s.`,
+          retryAfterSeconds: limit.retryAfterSeconds,
+        },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+      );
+    }
+  } catch (err) {
+    // Rate limit infra failure — fail open (better to allow than to lock out)
+    console.warn("[generate] rate limit check failed, allowing through:", err);
+  }
 
   let body: GenerateRequest;
   try {
@@ -105,14 +129,28 @@ export async function POST(request: Request) {
           elapsedMs: img.elapsedMs,
         };
       } catch (imgErr) {
-        // Don't fail the whole request — return tweet without image, log error
-        result.imageError = imgErr instanceof Error ? imgErr.message : String(imgErr);
+        if (imgErr instanceof BudgetExceededError) {
+          result.imageError = `image budget exceeded (${imgErr.used}/${imgErr.limit}). tweet text generated, image skipped.`;
+        } else {
+          result.imageError = imgErr instanceof Error ? imgErr.message : String(imgErr);
+        }
       }
     }
 
     result.totalElapsedMs = Date.now() - overallStart;
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof BudgetExceededError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: err.message,
+          budgetExceeded: { resource: err.resource, used: err.used, limit: err.limit },
+          totalElapsedMs: Date.now() - overallStart,
+        },
+        { status: 402 } // Payment Required
+      );
+    }
     console.error("[generate] error:", err);
     return NextResponse.json(
       {

@@ -127,5 +127,10 @@
       "evening":   { "min": 60,  "max": 150 },
       "latenight": { "min": 120, "max": 240 }
     }
+  },
+  "dailyLimits": {
+    "images": 50,
+    "anthropicTokens": 200000,
+    "comment": "Hard caps. Hit one and image-gen / claude refuse to act until UTC midnight. Set BUDGET_OVERRIDE=1 in env to bypass in emergencies."
   }
 }
