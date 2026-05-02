@@ -9,8 +9,8 @@ import { LoraPanel } from "@/components/LoraPanel";
 // M1: auth gate, status panel, kill switch
 // M2: Compose panel — pick pillar, generate tweet + image
 // M2.5: LoRA training UI — train, registry, set active
-// M2.6 (this commit): resilience — daily budget, retries, rate limits
-// M3: scheduler stats, daily counts (TBD)
+// M2.6: resilience — daily budget, retries, rate limits
+// M3 (this commit): cron + scheduler + autonomous posting + post-now
 // M4: mentions / reply queue (TBD)
 // M5: tools, meme test, raid mode toggle (TBD)
 // ============================================================
@@ -48,6 +48,34 @@ interface GenerateResponse {
   imageError?: string;
   totalElapsedMs?: number;
   error?: string;
+  budgetExceeded?: { resource: string; used: number; limit: number };
+}
+
+interface ActivityData {
+  today: {
+    date: string;
+    count: number;
+    tweets: Array<{
+      id: string;
+      text: string;
+      pillar: string;
+      postedAt: string;
+      url: string;
+      hasImage: boolean;
+      dryRun?: boolean;
+    }>;
+  };
+  crons: {
+    tweet: { lastSeen: string; agoMinutes: number } | null;
+    replies: { lastSeen: string; agoMinutes: number } | null;
+  };
+}
+
+interface ServerEvent {
+  ts: string;
+  type: "info" | "success" | "error" | "warn" | "post" | "skip" | "cron";
+  msg: string;
+  meta?: Record<string, unknown>;
 }
 
 export default function BotDashboard() {
@@ -64,6 +92,11 @@ export default function BotDashboard() {
   const [imageProvider, setImageProvider] = useState<"fal" | "openai">("fal");
   const [composing, setComposing] = useState(false);
   const [composeResult, setComposeResult] = useState<GenerateResponse | null>(null);
+  const [posting, setPosting] = useState(false);
+
+  // Activity + server log state (M3)
+  const [activity, setActivity] = useState<ActivityData | null>(null);
+  const [serverEvents, setServerEvents] = useState<ServerEvent[]>([]);
 
   const addLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -172,13 +205,78 @@ export default function BotDashboard() {
     }
   }, [selectedPillar, includeImage, imageProvider, authedFetch, addLog]);
 
-  // Auto-poll status every 30s when authenticated
+  // ── M3: Activity + server log fetchers ──
+  const fetchActivity = useCallback(async () => {
+    try {
+      const res = await authedFetch("/api/admin/activity");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as ActivityData;
+      setActivity(data);
+    } catch (err) {
+      addLog(`activity fetch failed: ${err instanceof Error ? err.message : err}`, "error");
+    }
+  }, [authedFetch, addLog]);
+
+  const fetchServerEvents = useCallback(async () => {
+    try {
+      const res = await authedFetch("/api/admin/events?limit=50");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { events: ServerEvent[] };
+      setServerEvents(data.events);
+    } catch (err) {
+      addLog(`events fetch failed: ${err instanceof Error ? err.message : err}`, "error");
+    }
+  }, [authedFetch, addLog]);
+
+  const postNow = useCallback(async () => {
+    if (!composeResult?.tweet) return;
+    if (!confirm(`Post this tweet live to @${status?.config.xHandle}?\n\n${composeResult.tweet.text}`)) return;
+    setPosting(true);
+    addLog(`posting to X…`, "info");
+    try {
+      const res = await authedFetch("/api/admin/post-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pillar: composeResult.tweet.pillar,
+          text: composeResult.tweet.text,
+          imageUrl: composeResult.image?.url,
+          imageProvider: composeResult.image?.provider,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        addLog(`post failed: ${data.error || res.status}`, "error");
+        return;
+      }
+      addLog(
+        `${data.dryRun ? "[DRY-RUN] " : ""}posted! ${data.url || data.tweetId}`,
+        "success"
+      );
+      setComposeResult(null);
+      // Refresh data so the new post appears in ACTIVITY
+      fetchActivity();
+      fetchServerEvents();
+    } catch (err) {
+      addLog(`post error: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setPosting(false);
+    }
+  }, [composeResult, status, authedFetch, addLog, fetchActivity, fetchServerEvents]);
+
+  // Auto-poll status + activity + events every 30s when authenticated
   useEffect(() => {
     if (!authenticated) return;
     fetchPillars();
-    const id = setInterval(() => fetchStatus(true), 30_000);
+    fetchActivity();
+    fetchServerEvents();
+    const id = setInterval(() => {
+      fetchStatus(true);
+      fetchActivity();
+      fetchServerEvents();
+    }, 30_000);
     return () => clearInterval(id);
-  }, [authenticated, fetchStatus, fetchPillars]);
+  }, [authenticated, fetchStatus, fetchPillars, fetchActivity, fetchServerEvents]);
 
   // ────── AUTH GATE ──────
   if (!authenticated) {
@@ -271,6 +369,53 @@ export default function BotDashboard() {
           )}
         </section>
 
+        {/* ACTIVITY — M3 */}
+        <section style={S.card}>
+          <div style={S.cardHeader}>
+            <h2 style={S.h2}>📊 ACTIVITY</h2>
+            <button onClick={fetchActivity} style={S.btnGhost}>↻ refresh</button>
+          </div>
+          {activity ? (
+            <>
+              <div style={S.activityHeader}>
+                <strong>{activity.today.count}</strong> tweet{activity.today.count === 1 ? "" : "s"} today · {activity.today.date}
+                <span style={S.cronStrip}>
+                  {activity.crons.tweet
+                    ? <>tweet cron seen <b>{activity.crons.tweet.agoMinutes}m</b> ago</>
+                    : <span style={{ color: "#c92020" }}>tweet cron: never</span>}
+                  {" · "}
+                  {activity.crons.replies
+                    ? <>replies cron seen <b>{activity.crons.replies.agoMinutes}m</b> ago</>
+                    : <span style={{ color: "#c92020" }}>replies cron: never</span>}
+                </span>
+              </div>
+              {activity.today.tweets.length === 0 ? (
+                <div style={S.empty}>no tweets today yet</div>
+              ) : (
+                <div style={S.tweetList}>
+                  {activity.today.tweets.map((t) => (
+                    <div key={t.id} style={S.tweetRow}>
+                      <div style={S.tweetRowText}>
+                        {t.dryRun && <span style={S.dryRunBadge}>DRY-RUN</span>}
+                        {t.hasImage && <span style={S.imgBadge}>🖼</span>}
+                        {t.text}
+                      </div>
+                      <div style={S.tweetRowMeta}>
+                        {t.pillar} · {new Date(t.postedAt).toLocaleTimeString("en-US", { hour12: false })}
+                        {t.url && !t.dryRun && (
+                          <> · <a href={t.url} target="_blank" rel="noopener noreferrer" style={S.link}>↗ view</a></>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={S.empty}>loading…</div>
+          )}
+        </section>
+
         {/* COMPOSE — M2 */}
         <section style={S.card}>
           <h2 style={S.h2}>✏ COMPOSE</h2>
@@ -352,6 +497,14 @@ export default function BotDashboard() {
               {composeResult.imageError && (
                 <div style={{ ...S.envItem, color: "#c92020", padding: 8 }}>image error: {composeResult.imageError}</div>
               )}
+
+              <button
+                onClick={postNow}
+                disabled={posting || !composeResult.ok}
+                style={S.btnPostNow}
+              >
+                {posting ? "🌀 posting…" : `🚀 post this to @${status?.config.xHandle || "spurdo"}`}
+              </button>
             </div>
           )}
 
@@ -382,14 +535,34 @@ export default function BotDashboard() {
 
         {/* LOG */}
         <section style={S.card}>
-          <h2 style={S.h2}>📜 LOG</h2>
-          <div style={S.logPanel}>
-            {log.length === 0 ? (
-              <div style={S.logEmpty}>no events yet</div>
-            ) : (
-              log.map((l, i) => (
+          <div style={S.cardHeader}>
+            <h2 style={S.h2}>📜 LOG</h2>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={fetchServerEvents} style={S.btnGhost}>↻ refresh</button>
+            </div>
+          </div>
+
+          {log.length > 0 && (
+            <div style={{ ...S.logPanel, marginBottom: 8, maxHeight: 110 }}>
+              <div style={S.envBoxTitle}>this session</div>
+              {log.map((l, i) => (
                 <div key={i} style={{ ...S.logEntry, color: typeColor(l.type) }}>
                   <span style={S.logTime}>{l.time}</span> {l.msg}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={S.logPanel}>
+            <div style={S.envBoxTitle}>server (persistent · last 50)</div>
+            {serverEvents.length === 0 ? (
+              <div style={S.logEmpty}>no events yet</div>
+            ) : (
+              serverEvents.map((e, i) => (
+                <div key={i} style={{ ...S.logEntry, color: typeColor(e.type === "post" ? "success" : e.type === "skip" ? "info" : e.type === "cron" ? "info" : (e.type as LogEntry["type"])) }}>
+                  <span style={S.logTime}>{new Date(e.ts).toLocaleTimeString("en-US", { hour12: false })}</span>
+                  <span style={S.eventTypeBadge}>{e.type}</span>
+                  {e.msg}
                 </div>
               ))
             )}
@@ -397,7 +570,7 @@ export default function BotDashboard() {
         </section>
 
         <footer style={S.footer}>
-          spurdo bot · M2.6: resilience · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
+          spurdo bot · M3: cron · {status?.timestamp ? new Date(status.timestamp).toLocaleString() : ""}
         </footer>
       </div>
     </div>
@@ -495,4 +668,28 @@ const S: Record<string, React.CSSProperties> = {
   tweetMeta: { fontFamily: "monospace", fontSize: 11, color: "#888", marginTop: 6 },
   imgPreview: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8 },
   imgThumb: { maxWidth: "100%", maxHeight: 480, border: "3px solid #1a1a1a", boxShadow: "4px 4px 0 #1a1a1a" },
+  // M3: post-now + activity + events
+  btnPostNow: {
+    width: "100%",
+    padding: "14px 18px",
+    border: "3px solid #1a1a1a",
+    background: "#8cc968",
+    fontFamily: "inherit",
+    fontSize: 16,
+    fontWeight: 700,
+    cursor: "pointer",
+    boxShadow: "4px 4px 0 #1a1a1a",
+    marginTop: 8,
+  },
+  activityHeader: { fontSize: 14, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  cronStrip: { fontFamily: "monospace", fontSize: 11, color: "#5a3820" },
+  empty: { fontStyle: "italic", color: "#888", padding: 12, textAlign: "center" },
+  tweetList: { display: "flex", flexDirection: "column", gap: 8 },
+  tweetRow: { padding: 10, background: "#f8f0d5", border: "2px solid #1a1a1a" },
+  tweetRowText: { fontSize: 14, marginBottom: 4, wordBreak: "break-word" },
+  tweetRowMeta: { fontFamily: "monospace", fontSize: 11, color: "#5a3820" },
+  link: { color: "#1a1a1a", textDecoration: "underline" },
+  dryRunBadge: { display: "inline-block", padding: "1px 6px", background: "#ffd5d5", border: "1px solid #1a1a1a", fontFamily: "monospace", fontSize: 10, marginRight: 6 },
+  imgBadge: { marginRight: 6 },
+  eventTypeBadge: { display: "inline-block", padding: "0 6px", marginRight: 6, fontFamily: "monospace", fontSize: 10, background: "#f5e9c9", border: "1px solid #1a1a1a", textTransform: "uppercase", letterSpacing: 0.5 },
 };

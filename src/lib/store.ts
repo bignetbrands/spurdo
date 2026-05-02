@@ -83,3 +83,88 @@ export async function getHeartbeat(
 // M1 STUB — more methods (recordTweet, getDailyState, hasReplied, etc.)
 // will arrive in M2/M3 as the orchestrator and scheduler need them.
 // ============================================================
+
+// ============================================================
+// TWEET RECORDS (M3+)
+// ============================================================
+// Per-day list of posted tweets. Used for:
+//   - daily activity panel in dashboard
+//   - "recent tweets" injected into Claude prompt for variety
+//   - dedup checks (M3 light, M4 heavy)
+//
+// Key shape:
+//   ${PROJECT}:tweets:YYYY-MM-DD  →  JSON array of TweetRecord
+//
+// Records expire after 14 days.
+// ============================================================
+
+export interface StoredTweet {
+  id: string;
+  text: string;
+  pillar: string;
+  postedAt: string; // ISO
+  url: string;
+  hasImage: boolean;
+  imageProvider?: string;
+  dryRun?: boolean;
+}
+
+const TWEET_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
+
+function todayUTC(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function tweetKey(date: string): string {
+  return kvKey(`tweets:${date}`);
+}
+
+/** Append a tweet to today's list. */
+export async function recordTweet(t: StoredTweet): Promise<void> {
+  const key = tweetKey(todayUTC());
+  const existing = (await getRedis().get<string | StoredTweet[]>(key)) || [];
+  const list: StoredTweet[] = typeof existing === "string" ? safeJson<StoredTweet[]>(existing) || [] : existing;
+  list.push(t);
+  await getRedis().set(key, JSON.stringify(list), { ex: TWEET_TTL_SECONDS });
+}
+
+/** Get today's posted tweets (UTC day). */
+export async function getDailyTweets(date?: string): Promise<StoredTweet[]> {
+  const v = await getRedis().get<string | StoredTweet[]>(tweetKey(date || todayUTC()));
+  if (!v) return [];
+  return typeof v === "string" ? safeJson<StoredTweet[]>(v) || [] : v;
+}
+
+/**
+ * Get the most recent N tweets across the last 3 days.
+ * Used to feed Claude's prompt with recent-style context (don't repeat).
+ */
+export async function getRecentTweets(limit: number = 8): Promise<StoredTweet[]> {
+  const days: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const lists = await Promise.all(days.map((d) => getDailyTweets(d)));
+  const flat = lists.flat();
+  // Sort newest first by postedAt
+  flat.sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1));
+  return flat.slice(0, limit);
+}
+
+/** Time the most recent tweet was posted. Used by scheduler for gap checking. */
+export async function getLastPostedAt(): Promise<Date | null> {
+  const recent = await getRecentTweets(1);
+  if (recent.length === 0) return null;
+  return new Date(recent[0].postedAt);
+}
+
+function safeJson<T>(s: string): T | null {
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return null;
+  }
+}

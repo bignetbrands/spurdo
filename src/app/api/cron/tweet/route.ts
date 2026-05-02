@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { checkCronAuth } from "@/lib/auth";
-import { isKillSwitchActive, recordHeartbeat } from "@/lib/store";
+import { recordHeartbeat } from "@/lib/store";
+import { decideNext } from "@/lib/scheduler";
+import { executeTweet } from "@/lib/orchestrator";
+import { logEvent } from "@/lib/events";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -8,29 +11,60 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/cron/tweet
  *
- * M1 stub: records heartbeat, respects kill switch, returns 501 (not implemented).
- * M2/M3 will wire up the actual scheduler + executeTweet pipeline.
+ * Vercel Cron hits this every 30 minutes. Flow:
+ *   1. Auth check (CRON_SECRET)
+ *   2. Heartbeat to KV (so dashboard knows cron is alive)
+ *   3. Ask scheduler: should we post right now?
+ *      - If no: log skip with reason, return 200
+ *      - If yes: call executeTweet → post → record
+ *   4. Return JSON result
+ *
+ * Always returns 200 with a structured payload — even on errors.
+ * Vercel retries 5xx responses, which we don't want for posts
+ * (would risk double-posting the same content).
  */
 export async function GET(request: Request) {
   const unauthorized = checkCronAuth(request);
   if (unauthorized) return unauthorized;
 
-  if (await isKillSwitchActive()) {
+  await recordHeartbeat("cron:tweet");
+
+  // ── Decide ──
+  const decision = await decideNext();
+
+  if (!decision.shouldPost) {
+    await logEvent("cron", `skip: ${decision.reason}`, { meta: decision.meta });
     return NextResponse.json({
       posted: false,
-      reason: "kill switch active",
+      reason: decision.reason,
+      meta: decision.meta,
       timestamp: new Date().toISOString(),
     });
   }
 
-  await recordHeartbeat("cron:tweet");
-
-  return NextResponse.json(
-    {
+  // ── Execute ──
+  if (!decision.pillar) {
+    // Should be impossible given the scheduler contract, but guard anyway
+    await logEvent("error", "scheduler said shouldPost but provided no pillar");
+    return NextResponse.json({
       posted: false,
-      reason: "M1 stub — posting pipeline lands in M2",
+      reason: "scheduler error: shouldPost but no pillar",
       timestamp: new Date().toISOString(),
-    },
-    { status: 501 }
-  );
+    });
+  }
+
+  const result = await executeTweet({ pillar: decision.pillar, trigger: "cron" });
+
+  return NextResponse.json({
+    posted: result.ok,
+    tweetId: result.tweetId,
+    url: result.url,
+    text: result.text,
+    hasImage: result.hasImage,
+    pillar: result.pillar,
+    dryRun: result.dryRun,
+    error: result.error,
+    elapsedMs: result.elapsedMs,
+    timestamp: new Date().toISOString(),
+  });
 }
