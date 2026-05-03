@@ -21,7 +21,13 @@ type LogEntry = { time: string; msg: string; type: "info" | "success" | "error" 
 interface StatusData {
   timestamp: string;
   killSwitch: boolean;
-  config: { project: string; xHandle: string; pillarsCount: number; contractAddress: string };
+  config: {
+    project: string;
+    xHandle: string;
+    pillarsCount: number;
+    contractAddress: string;
+    allowedImageProviders?: Array<"bank" | "fal" | "openai">;
+  };
   kvHealth: boolean;
   activeLora?: { url: string } | null;
   budget?: {
@@ -470,16 +476,35 @@ export default function BotDashboard() {
 
               <label style={S.label}>
                 provider
-                <select
-                  value={imageProvider}
-                  onChange={(e) => setImageProvider(e.target.value as "fal" | "openai" | "bank")}
-                  disabled={composing || !includeImage}
-                  style={S.selectInline}
-                >
-                  <option value="bank">bank (curated memes) — free, on-canon</option>
-                  <option value="fal">fal (FLUX + LoRA) — generated</option>
-                  <option value="openai">openai (gpt-image-1) — generated fallback</option>
-                </select>
+                {(() => {
+                  const allowed = status?.config.allowedImageProviders ?? ["bank", "fal", "openai"];
+                  const current = allowed.includes(imageProvider) ? imageProvider : allowed[0];
+                  // If state is out of sync with allowed list, correct it
+                  if (current !== imageProvider && allowed.length > 0) {
+                    setTimeout(() => setImageProvider(current as "fal" | "openai" | "bank"), 0);
+                  }
+                  if (allowed.length === 1) {
+                    return (
+                      <div style={S.providerLocked}>
+                        {labelForProvider(allowed[0])} <span style={S.providerLockedNote}>only option for this project</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <select
+                      value={current}
+                      onChange={(e) => setImageProvider(e.target.value as "fal" | "openai" | "bank")}
+                      disabled={composing || !includeImage}
+                      style={S.selectInline}
+                    >
+                      {allowed.map((p) => (
+                        <option key={p} value={p}>
+                          {labelForProvider(p)}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
               </label>
             </div>
 
@@ -653,6 +678,12 @@ function typeColor(t: LogEntry["type"]): string {
   return t === "error" ? "#c92020" : t === "warn" ? "#a06800" : t === "success" ? "#0a8c3a" : "#444";
 }
 
+function labelForProvider(p: "bank" | "fal" | "openai"): string {
+  if (p === "bank") return "bank (curated memes) — free, on-canon";
+  if (p === "fal") return "fal (FLUX + LoRA) — generated";
+  return "openai (gpt-image-1) — generated";
+}
+
 const S: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: "#f5e9c9", fontFamily: '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive', color: "#1a1a1a", padding: "24px 16px" },
   container: { maxWidth: 920, margin: "0 auto" },
@@ -695,6 +726,8 @@ const S: Record<string, React.CSSProperties> = {
   label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", fontWeight: 700 },
   select: { padding: "10px 12px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 14, cursor: "pointer" },
   selectInline: { padding: "6px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer", marginLeft: 8 },
+  providerLocked: { padding: "6px 10px", border: "2px solid #0a8c3a", background: "#f0f8ea", fontFamily: "monospace", fontSize: 12, marginLeft: 8 },
+  providerLockedNote: { color: "#0a8c3a", fontStyle: "italic", marginLeft: 4 },
   pillarBlurb: { fontSize: 13, color: "#5a3820", padding: "8px 12px", background: "#f5e9c9", border: "2px dashed #1a1a1a" },
   composeOpts: { display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" },
   checkboxLabel: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820" },

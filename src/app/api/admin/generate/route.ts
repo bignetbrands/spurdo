@@ -93,6 +93,18 @@ export async function POST(request: Request) {
     );
   }
 
+  // Enforce allowed image providers from config (server-side check)
+  const allowedProviders = cfg.imagePrompts.allowedProviders;
+  if (body.imageProvider && allowedProviders && !allowedProviders.includes(body.imageProvider)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `image provider '${body.imageProvider}' not allowed for project '${cfg.projectId}'. Allowed: ${allowedProviders.join(", ")}.`,
+      },
+      { status: 400 }
+    );
+  }
+
   const overallStart = Date.now();
 
   try {

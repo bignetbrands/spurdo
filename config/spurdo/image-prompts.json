@@ -2,6 +2,8 @@
   "model": "gpt-image-1",
   "size": "1024x1024",
   "quality": "medium",
+  "allowedProviders": ["bank"],
+  "allowedProvidersComment": "Spurdo's MS-Paint style is fundamentally outside FLUX/DALL-E's training distribution. Generation produces polished cartoon output that drifts off-canon every time. Bank-only enforces the curation discipline. Future projects with photoreal/polished styles can list ['bank', 'fal', 'openai'] here.",
   "lockedPromptTemplate": "spurdo spärde meme drawn in early internet MS Paint style. brown rounded bean-shaped head, cream/yellow long oval mouth-muzzle area, tiny black dot eyes, big pink open smile, weird stretched face proportions, simple cartoon body that's stiff or awkward, oversized floppy hands, simple black-blob feet. Thick uneven black outlines, wobbly hand-drawn edges, no clean vector curves, looks slightly messy and amateur like it was drawn fast with a mouse in 2008. FLAT solid colors only — NO gradients, NO realistic lighting, NO shading. Set in [SCENE]. Low-resolution screenshot-like feel, meme-panel crop, simple flat background, imperfect anatomy. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cell-shaded, NOT modern digital art. NO text, NO logos, NO watermarks.",
   "scenesByPillar": {
     "pure_reactions": [

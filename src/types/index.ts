@@ -69,6 +69,9 @@ export interface ImagePromptsConfig {
   model: string;
   size: string;
   quality: "low" | "medium" | "high";
+  /** Image providers exposed in the COMPOSE dropdown for this project. Order matters; first is default. */
+  allowedProviders?: Array<"bank" | "fal" | "openai">;
+  allowedProvidersComment?: string;
   lockedPromptTemplate: string;
   scenesByPillar: Record<PillarId, string[]>;
   hardExclusions: string[];
