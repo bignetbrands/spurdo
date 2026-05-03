@@ -76,6 +76,42 @@ export async function generateTweet(
 }
 
 /**
+ * Generate text using arbitrary system + user prompts. Used for replies
+ * (where the prompt is built from the parent tweet, not from a pillar).
+ *
+ * Caller passes its own system + user prompts. Token budget IS still
+ * checked and recorded — replies count against the same daily quota.
+ */
+export async function generateReply(opts: {
+  systemPrompt: string;
+  userPrompt: string;
+  /** Which Claude model. Replies default to haiku for speed/cost. */
+  model?: "haiku" | "sonnet" | "opus";
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<{ text: string; model: string; tokensUsed: number }> {
+  await assertTokenBudget();
+
+  const model = MODELS[opts.model || "haiku"];
+  const response = await getClient().messages.create({
+    model,
+    max_tokens: opts.maxTokens ?? 200,
+    system: opts.systemPrompt,
+    messages: [{ role: "user", content: opts.userPrompt }],
+    temperature: opts.temperature ?? 0.85, // slightly less random than tweets — replies need to track context
+  });
+
+  const block = response.content[0];
+  const raw = block.type === "text" ? block.text : "";
+  const cleaned = cleanTweetText(raw);
+  const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
+
+  await recordTokenSpend(tokensUsed).catch(() => undefined);
+
+  return { text: cleaned, model, tokensUsed };
+}
+
+/**
  * Clean up tweet text from the LLM:
  * - strip surrounding quotes
  * - trim whitespace

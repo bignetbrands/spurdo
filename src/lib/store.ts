@@ -161,6 +161,72 @@ export async function getLastPostedAt(): Promise<Date | null> {
   return new Date(recent[0].postedAt);
 }
 
+// ============================================================
+// REPLY TRACKING (M4-rest)
+// ============================================================
+// Two pieces of state needed for the mention reply pipeline:
+//
+//   1. since_id watermark — the highest mention ID we've seen, so the
+//      next cron run only fetches genuinely new mentions. This is what
+//      Twitter recommends instead of fetching the full timeline each call.
+//
+//   2. processed set — short TTL set of mention IDs we've already replied
+//      to. Belt-and-suspenders against double-replies if the watermark
+//      gets reset (deploys, KV flush, race conditions).
+//
+// The watermark is authoritative for "what's new"; the set is the
+// idempotency check before posting.
+// ============================================================
+
+const MENTION_SINCE_KEY = () => kvKey("replies:since-id");
+const REPLIED_SET_KEY = () => kvKey("replies:processed");
+const FAMILY_LAST_REPLIED_KEY = () => kvKey("replies:family-last");
+
+/** Highest mention ID we've fetched. Returns undefined if first run. */
+export async function getMentionSinceId(): Promise<string | undefined> {
+  const v = await getRedis().get<string>(MENTION_SINCE_KEY());
+  return v || undefined;
+}
+
+export async function setMentionSinceId(id: string): Promise<void> {
+  await getRedis().set(MENTION_SINCE_KEY(), id);
+}
+
+/**
+ * Has this mention ID already been replied to?
+ * Uses Redis SET semantics — O(1) check.
+ */
+export async function wasMentionReplied(mentionId: string): Promise<boolean> {
+  const v = await getRedis().sismember(REPLIED_SET_KEY(), mentionId);
+  return v === 1;
+}
+
+/**
+ * Mark a mention as replied-to. Sets are bounded — we trim oldest
+ * entries when set grows beyond limit (Redis SCARD + SPOP).
+ */
+export async function markMentionReplied(mentionId: string): Promise<void> {
+  await getRedis().sadd(REPLIED_SET_KEY(), mentionId);
+  // Soft cap: trim if we exceed 5000. SPOP removes random members so we
+  // can't preserve "newest" — but the since_id watermark covers that
+  // case, so trimming randomly is acceptable.
+  const size = await getRedis().scard(REPLIED_SET_KEY());
+  if (size > 5000) {
+    await getRedis().spop(REPLIED_SET_KEY(), size - 5000);
+  }
+}
+
+/** Track when we last replied to a given family account, so we don't
+ *  reply too frequently. Returns ISO timestamp or null. */
+export async function getFamilyAccountLastReplied(handle: string): Promise<string | null> {
+  const v = await getRedis().hget<string>(FAMILY_LAST_REPLIED_KEY(), handle.toLowerCase());
+  return v || null;
+}
+
+export async function setFamilyAccountLastReplied(handle: string, ts: string = new Date().toISOString()): Promise<void> {
+  await getRedis().hset(FAMILY_LAST_REPLIED_KEY(), { [handle.toLowerCase()]: ts });
+}
+
 function safeJson<T>(s: string): T | null {
   try {
     return JSON.parse(s) as T;

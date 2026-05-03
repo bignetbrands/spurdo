@@ -1,12 +1,14 @@
-import { generateTweet } from "./claude";
+import { generateTweet, generateReply } from "./claude";
 import { generateImage } from "./image-gen";
 import { postTweet, isDryRun } from "./twitter";
-import { recordTweet, getRecentTweets } from "./store";
+import type { PostTweetResult } from "./twitter";
+import { recordTweet, getRecentTweets, isKillSwitchActive } from "./store";
 import { logEvent } from "./events";
 import { loadConfig } from "./config";
 import { BudgetExceededError } from "./budget";
 import { retryWithBackoff } from "./retry";
-import type { PillarId } from "@/types";
+import { buildReplyPrompt } from "./prompts";
+import type { PillarId, ProjectConfig } from "@/types";
 
 // ============================================================
 // ORCHESTRATOR
@@ -193,3 +195,200 @@ export async function executeTweet(opts: ExecuteTweetOptions): Promise<ExecuteTw
 
 /** Re-export for cron route convenience */
 export { isDryRun };
+
+// ============================================================
+// REPLY ORCHESTRATOR
+// ============================================================
+// Single entry point for replying to a tweet. Generates a Spurdish
+// reply (using buildReplyPrompt + Claude), optionally attaches a bank
+// meme, posts as an in-reply-to, records to KV.
+//
+// Mention-based replies and family-account engagement both call this.
+// Both are auth'd through the same X API connection, both consume the
+// daily token budget, both are governed by the kill switch.
+// ============================================================
+
+export interface ExecuteReplyOptions {
+  parentTweetId: string;
+  parentText: string;
+  authorUsername: string;
+  isFamilyAccount?: boolean;
+  hasParentImage?: boolean;
+  hasParentVideo?: boolean;
+  /** If true, attach a random bank meme (default: false — replies are usually text-only) */
+  includeImage?: boolean;
+  /** Trigger label for the event log */
+  trigger: "cron-mention" | "cron-family" | "manual";
+}
+
+export interface ExecuteReplyResult {
+  ok: boolean;
+  error?: string;
+  budgetExceeded?: { resource: string; used: number; limit: number };
+  tweetId?: string;
+  url?: string;
+  text?: string;
+  hasImage?: boolean;
+  dryRun?: boolean;
+  imageProvider?: string;
+  parentTweetId: string;
+  authorUsername: string;
+  elapsedMs: number;
+}
+
+export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteReplyResult> {
+  const startTime = Date.now();
+
+  if (await isKillSwitchActive()) {
+    return {
+      ok: false,
+      error: "kill switch active",
+      parentTweetId: opts.parentTweetId,
+      authorUsername: opts.authorUsername,
+      elapsedMs: Date.now() - startTime,
+    };
+  }
+
+  const cfg = loadConfig();
+
+  // ── Generate reply text ──
+  const replyPrompt = buildReplyPrompt(cfg, {
+    parentText: opts.parentText,
+    authorUsername: opts.authorUsername,
+    isFamilyAccount: opts.isFamilyAccount,
+    hasParentImage: opts.hasParentImage,
+    hasParentVideo: opts.hasParentVideo,
+  });
+
+  let replyText: string;
+  try {
+    const gen = await generateReply({
+      systemPrompt: buildReplySystemPrompt(cfg),
+      userPrompt: replyPrompt,
+      model: "haiku", // fast + cheap for replies; pillars use sonnet
+      maxTokens: 200,
+    });
+    replyText = gen.text.trim();
+  } catch (err) {
+    if (err instanceof BudgetExceededError) {
+      return {
+        ok: false,
+        error: err.message,
+        budgetExceeded: { resource: "tokens", used: 0, limit: 0 },
+        parentTweetId: opts.parentTweetId,
+        authorUsername: opts.authorUsername,
+        elapsedMs: Date.now() - startTime,
+      };
+    }
+    return {
+      ok: false,
+      error: `reply generation failed: ${err instanceof Error ? err.message : err}`,
+      parentTweetId: opts.parentTweetId,
+      authorUsername: opts.authorUsername,
+      elapsedMs: Date.now() - startTime,
+    };
+  }
+
+  if (!replyText) {
+    return {
+      ok: false,
+      error: "Claude returned empty reply text",
+      parentTweetId: opts.parentTweetId,
+      authorUsername: opts.authorUsername,
+      elapsedMs: Date.now() - startTime,
+    };
+  }
+
+  // ── Optional image attach (default off — replies usually text only) ──
+  let imageUrl: string | undefined;
+  let imageProvider: string | undefined;
+  if (opts.includeImage) {
+    try {
+      const img = await generateImage({
+        pillarId: "pure_reactions",
+        provider: "bank",
+      });
+      imageUrl = img.imageUrl;
+      imageProvider = img.provider;
+    } catch (err) {
+      console.warn("[orchestrator/reply] bank pick failed, posting text-only:", err);
+    }
+  }
+
+  // ── Post reply ──
+  let posted: PostTweetResult;
+  try {
+    const retryResult = await retryWithBackoff(
+      () =>
+        postTweet({
+          text: replyText,
+          imageUrl,
+          inReplyToTweetId: opts.parentTweetId,
+        }),
+      {
+        maxAttempts: 2,
+        initialDelayMs: 2000,
+        onRetry: (attempt, err) =>
+          console.warn(`[orchestrator/reply] retry ${attempt}:`, err instanceof Error ? err.message : err),
+      }
+    );
+    posted = retryResult.result;
+  } catch (err) {
+    await logEvent("error", `reply post failed for @${opts.authorUsername}`, {
+      parentTweetId: opts.parentTweetId,
+      error: err instanceof Error ? err.message : String(err),
+      trigger: opts.trigger,
+    }).catch(() => undefined);
+    return {
+      ok: false,
+      error: `X post failed: ${err instanceof Error ? err.message : err}`,
+      parentTweetId: opts.parentTweetId,
+      authorUsername: opts.authorUsername,
+      elapsedMs: Date.now() - startTime,
+    };
+  }
+
+  await logEvent("post", `reply to @${opts.authorUsername} → ${posted.tweetId}`, {
+    parentTweetId: opts.parentTweetId,
+    replyTweetId: posted.tweetId,
+    text: replyText,
+    hasImage: posted.hasImage,
+    dryRun: posted.dryRun,
+    trigger: opts.trigger,
+    isReply: true,
+  }).catch(() => undefined);
+
+  return {
+    ok: true,
+    tweetId: posted.tweetId,
+    url: posted.url,
+    text: posted.text,
+    hasImage: posted.hasImage,
+    dryRun: posted.dryRun,
+    imageProvider,
+    parentTweetId: opts.parentTweetId,
+    authorUsername: opts.authorUsername,
+    elapsedMs: Date.now() - startTime,
+  };
+}
+
+/** Build the system prompt for replies. Same character as tweets but
+ *  with reply-specific reminders. */
+function buildReplySystemPrompt(cfg: ProjectConfig): string {
+  const reminders = [
+    "",
+    "─── REPLY CONTEXT (additional rules) ───",
+    `- This is a REPLY to someone's tweet. Stay short. Stay in character.`,
+    `- ALL LOWERCASE always. Banned punctuation: ${cfg.voice.punctuation.bannedChars.join(" ")}`,
+    `- Banned phrases: ${cfg.voice.bannedPhrases.slice(0, 8).join(", ")}.`,
+    `- Required vocab to use: ${cfg.voice.requiredVocab.join(", ")}.`,
+    cfg.voice.bSwap.protectedNames.length > 0
+      ? `- Never B-swap: ${cfg.voice.bSwap.protectedNames.join(", ")}.`
+      : "",
+    `- Max ${cfg.voice.lengthLimits.preferredMaxChars} chars preferred. Keep it short.`,
+    "",
+    "Output ONLY the reply text. No quotes, no preamble, no @-mention prefix (X handles that automatically).",
+  ].filter(Boolean);
+
+  return cfg.character + "\n" + reminders.join("\n");
+}

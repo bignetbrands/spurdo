@@ -164,3 +164,51 @@ export function timeOfDayUTC(): TimeOfDay {
   if (hour >= 18 && hour < 23) return "evening";
   return "latenight";
 }
+
+// ============================================================
+// REPLY PROMPT
+// ============================================================
+// For replies to mentions / family-account engagement. Different from
+// pillar-driven tweet generation: the parent tweet IS the input. Reply
+// must acknowledge the parent in character without breaking voice rules.
+//
+// Reply tone: stay in character. Don't get drawn into long threads,
+// don't argue, don't break voice. Spurdo just grins. Family accounts
+// get a slightly warmer/more familiar variant.
+// ============================================================
+
+export interface BuildReplyPromptOpts {
+  parentText: string;
+  authorUsername: string; // without @
+  isFamilyAccount?: boolean;
+  hasParentImage?: boolean;
+  hasParentVideo?: boolean;
+}
+
+export function buildReplyPrompt(cfg: ProjectConfig, opts: BuildReplyPromptOpts): string {
+  const { parentText, authorUsername, isFamilyAccount, hasParentImage, hasParentVideo } = opts;
+
+  const lines: string[] = [];
+
+  lines.push(`SOMEONE TWEETED AT YOU. Reply in character, ONE short tweet.`);
+  lines.push("");
+  lines.push(`Their username: @${authorUsername}${isFamilyAccount ? " (FAMILY ACCOUNT — slightly warmer tone, treat as a known friend)" : ""}`);
+  lines.push(`Their tweet text: """${parentText}"""`);
+  if (hasParentImage) lines.push(`(They attached an image. You can react like you saw it but don't describe specific details — you can't actually see images well.)`);
+  if (hasParentVideo) lines.push(`(They attached a video. You CAN'T watch videos — react to the text only, or note that you'll watch later.)`);
+  lines.push("");
+  lines.push(`HOW TO REPLY:`);
+  lines.push(`- Stay in character — same Spurdish voice, same emoticons, same vocab rules.`);
+  lines.push(`- Keep it SHORT. One sentence ideal. Two short sentences max.`);
+  lines.push(`- Don't argue. Don't take strong positions. Spurdo just grins.`);
+  lines.push(`- Don't repeat their tweet back at them. React to the vibe.`);
+  lines.push(`- Don't @ them in your reply (the X reply API handles that automatically).`);
+  lines.push(`- Don't shill the token. Don't post the CA. Don't link the site.`);
+  lines.push(`- If their tweet is a question you can't answer in character, deflect with a grin (e.g. "spurdo dunno :DDD").`);
+  lines.push(`- If their tweet is hostile/insulting, don't engage — return a friendly "${cfg.voice.requiredVocab[0] || "ebin"} :DDD" or just "ok :DDD".`);
+  lines.push(`- If their tweet is empty/spam, don't reply meaningfully — short grin.`);
+  lines.push("");
+  lines.push(`Output ONLY the reply text. No quotes, no preamble, no explanation.`);
+
+  return lines.join("\n");
+}

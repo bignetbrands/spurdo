@@ -121,6 +121,128 @@ export async function postTweet(opts: PostTweetOptions): Promise<PostTweetResult
   };
 }
 
+// ============================================================
+// Mention fetching
+// ============================================================
+
+export interface Mention {
+  /** Tweet ID of the mention */
+  id: string;
+  /** Tweet text */
+  text: string;
+  /** When the tweet was posted */
+  createdAt: string;
+  /** Twitter user ID of the author */
+  authorId: string;
+  /** Author's screen name (without @) */
+  authorUsername: string;
+  /** Author's display name */
+  authorName: string;
+  /** ID of the conversation root, useful for thread-aware replies */
+  conversationId?: string;
+  /** ID of the tweet this mention is replying to, if any */
+  inReplyToTweetId?: string;
+  /** URLs of any images in the mention itself */
+  imageUrls: string[];
+  /** True if the mention has a video (we can't see videos) */
+  hasVideo: boolean;
+}
+
+/**
+ * Fetch mentions of @${TWITTER_HANDLE} since the given tweet ID.
+ * Pass undefined sinceId on first run; subsequent runs should pass
+ * the highest ID seen so far so we only get genuinely new mentions.
+ *
+ * Returns an empty array in DRY_RUN mode (no API calls). Returns an
+ * empty array if no user_id is configured (we need it for the v2
+ * mentions timeline endpoint).
+ */
+export async function fetchMentions(opts: {
+  userId: string;
+  sinceId?: string;
+  maxResults?: number;
+}): Promise<Mention[]> {
+  if (isDryRun()) return [];
+
+  const client = getClient();
+  const max = Math.min(Math.max(opts.maxResults ?? 20, 5), 100);
+
+  // userMentionTimeline expects the authenticated user's numeric ID.
+  // Provide rich expansions so we get author names and image URLs in one call.
+  const tl = await client.v2.userMentionTimeline(opts.userId, {
+    max_results: max,
+    since_id: opts.sinceId,
+    "tweet.fields": ["created_at", "conversation_id", "in_reply_to_user_id", "referenced_tweets", "attachments"],
+    "user.fields": ["username", "name"],
+    "media.fields": ["type", "url", "preview_image_url"],
+    expansions: ["author_id", "attachments.media_keys"],
+  });
+
+  // Build lookup tables for the includes
+  const usersById = new Map<string, { username: string; name: string }>();
+  for (const u of tl.includes?.users ?? []) {
+    usersById.set(u.id, { username: u.username, name: u.name });
+  }
+  const mediaByKey = new Map<string, { type: string; url?: string; preview_image_url?: string }>();
+  for (const m of tl.includes?.media ?? []) {
+    const key = (m as { media_key: string }).media_key;
+    mediaByKey.set(key, m as { type: string; url?: string; preview_image_url?: string });
+  }
+
+  const out: Mention[] = [];
+  for (const t of tl.data?.data ?? []) {
+    const author = usersById.get(t.author_id || "");
+    const mediaKeys = (t.attachments?.media_keys ?? []) as string[];
+    const imageUrls: string[] = [];
+    let hasVideo = false;
+    for (const k of mediaKeys) {
+      const m = mediaByKey.get(k);
+      if (!m) continue;
+      if (m.type === "video" || m.type === "animated_gif") hasVideo = true;
+      const u = m.url || m.preview_image_url;
+      if (u && (m.type === "photo" || m.type === "animated_gif")) imageUrls.push(u);
+    }
+    const referenced = (t.referenced_tweets ?? []) as Array<{ type: string; id: string }>;
+    const replyRef = referenced.find((r) => r.type === "replied_to");
+
+    out.push({
+      id: t.id,
+      text: t.text,
+      createdAt: t.created_at || new Date().toISOString(),
+      authorId: t.author_id || "",
+      authorUsername: author?.username || "unknown",
+      authorName: author?.name || "Unknown",
+      conversationId: t.conversation_id,
+      inReplyToTweetId: replyRef?.id,
+      imageUrls,
+      hasVideo,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Look up the authenticated user's numeric ID. Cached for the lifetime
+ * of the process; should rarely change, and Twitter's "me" endpoint
+ * is cheap enough to call once per cold start.
+ */
+let _meIdCache: string | null = null;
+export async function getAuthenticatedUserId(): Promise<string> {
+  if (_meIdCache) return _meIdCache;
+  // Allow operator override via env (avoids API call entirely)
+  const fromEnv = process.env.TWITTER_USER_ID;
+  if (fromEnv) {
+    _meIdCache = fromEnv;
+    return fromEnv;
+  }
+  if (isDryRun()) return "dryrun_user_id";
+  const client = getClient();
+  const me = await client.v2.me();
+  _meIdCache = me.data.id;
+  return _meIdCache;
+}
+
 // ────────── helpers ──────────
 
 async function fetchImageBuffer(url: string): Promise<Buffer> {
