@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { loadConfig } from "./config";
 import { buildImagePrompt } from "./prompts";
+import { generateImageScene } from "./claude";
 import { getActiveLoraUrl } from "./lora";
 import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
@@ -98,7 +99,8 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
   // ── OPENAI: direct route, no stack involvement ──
   if (requested === "openai") {
     await assertImageBudget();
-    const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
+    const sceneToUse = await resolveScene(opts);
+    const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", sceneToUse);
     const startTime = Date.now();
     const result = await generateViaOpenAI(built.prompt);
     await recordImageSpend(1).catch(() => undefined);
@@ -111,7 +113,8 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
 
   // ── FAL: dispatch by configured gen stack ──
   await assertImageBudget();
-  const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
+  const sceneToUse = await resolveScene(opts);
+  const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", sceneToUse);
   const startTime = Date.now();
 
   // Resolve identity LoRA: explicit > registry > env > none
@@ -203,6 +206,36 @@ function ensureFalConfigured() {
 
 function isHttpsLoraUrl(u: string | null | undefined): u is string {
   return typeof u === "string" && /^https?:\/\//.test(u);
+}
+
+// ============================================================
+// SCENE RESOLUTION
+// ============================================================
+// Materializes a scene description for the image prompt. Order of
+// preference:
+//   1. Explicit sceneOverride from caller (e.g. operator-supplied)
+//   2. Claude haiku scene-from-tweet (when tweetText is provided)
+//   3. undefined → buildImagePrompt falls back to scenesByPillar list
+//      or generic flat background
+//
+// We call Claude here (not in buildImagePrompt) so the cost shows up in
+// the image-gen path and gets tracked under image budget proxy via the
+// token spend recorded in claude.ts.
+// ============================================================
+
+async function resolveScene(opts: { tweetText?: string; pillarId: PillarId; sceneOverride?: string }): Promise<string | undefined> {
+  if (opts.sceneOverride && opts.sceneOverride.trim()) return opts.sceneOverride;
+  if (!opts.tweetText || !opts.tweetText.trim()) return undefined; // let buildImagePrompt fall back to pillar list
+  try {
+    const scene = await generateImageScene({
+      tweetText: opts.tweetText,
+      pillarHint: opts.pillarId,
+    });
+    return scene;
+  } catch (err) {
+    console.warn("[image-gen] scene resolution failed, falling back to pillar list:", err);
+    return undefined; // buildImagePrompt will pick from scenesByPillar
+  }
 }
 
 // ============================================================

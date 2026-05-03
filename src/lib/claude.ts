@@ -112,6 +112,70 @@ export async function generateReply(opts: {
 }
 
 /**
+ * Generate an image SCENE description from a tweet's text. The scene is a
+ * short visual description that gets composed into the locked character
+ * template, so the generated image actually reflects what the tweet says
+ * rather than being a generic background.
+ *
+ * Example:
+ *   tweet: "wakin up. stil grinnin :DDD"
+ *   →     "spurdo in bed, blanket pulled up to chest, morning light through window, eyes half-open"
+ *
+ * Uses haiku (cheap + fast). Falls back to a generic "flat solid background"
+ * scene on error so image gen never blocks on this step.
+ */
+export async function generateImageScene(opts: {
+  tweetText: string;
+  /** Optional pillar hint — gives the model context about what the tweet category is */
+  pillarHint?: string;
+}): Promise<string> {
+  await assertTokenBudget();
+
+  const userPrompt = [
+    `TWEET: "${opts.tweetText.trim()}"`,
+    opts.pillarHint ? `PILLAR: ${opts.pillarHint}` : "",
+    "",
+    "Translate this tweet into a SHORT visual scene description suitable for image generation.",
+    "",
+    "RULES:",
+    "- Output ONE LINE describing the scene/environment around the character.",
+    "- 8-15 words ideal. Concrete. Visual. No abstractions.",
+    "- DO NOT describe the character's appearance — that's locked elsewhere.",
+    "- DO describe: setting, weather, time of day, props, posture, what they're doing.",
+    "- If the tweet is purely emotional/abstract with no clear scene, default to a simple environment that matches the mood (e.g. 'sitting on snow at night, finnish forest in background').",
+    "- NO text/captions/labels in the scene.",
+    "",
+    "Output ONLY the scene description. No quotes, no preamble, no explanation.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const response = await getClient().messages.create({
+      model: MODELS.haiku,
+      max_tokens: 80,
+      system:
+        "You translate tweets into one-line visual scene descriptions for image generation. Output the scene only — no preamble, no quotes.",
+      messages: [{ role: "user", content: userPrompt }],
+      temperature: 0.7,
+    });
+    const block = response.content[0];
+    const raw = block.type === "text" ? block.text : "";
+    const cleaned = raw
+      .trim()
+      .replace(/^["'""'']|["'""'']$/g, "")
+      .trim()
+      .split("\n")[0]; // first line only — defensive against multi-line returns
+    const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
+    await recordTokenSpend(tokensUsed).catch(() => undefined);
+    return cleaned || "flat off-white background, simple meme panel framing";
+  } catch (err) {
+    console.warn("[claude/scene] failed, using fallback scene:", err);
+    return "flat off-white background, simple meme panel framing";
+  }
+}
+
+/**
  * Clean up tweet text from the LLM:
  * - strip surrounding quotes
  * - trim whitespace
