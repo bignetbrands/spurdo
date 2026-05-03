@@ -296,6 +296,16 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         )}
 
         <label style={S.label}>training images (10-20 recommended)</label>
+        <div style={S.calloutBlue}>
+          <strong>💡 for character LoRAs:</strong> variety beats quantity. Include a mix of:
+          <ul style={S.tipList}>
+            <li><strong>full-body shots</strong> — so the model learns body proportions (not just face)</li>
+            <li><strong>various crops</strong> — head-only, half-body, full-body</li>
+            <li><strong>various poses</strong> — standing, sitting, side view, action</li>
+            <li><strong>various backgrounds</strong> — so the LoRA doesn&apos;t bake in one solid color</li>
+          </ul>
+          if your output has the right head but a weird body, your training set was head-heavy.
+        </div>
         <div
           style={{ ...S.dropzone, ...(dragActive ? S.dropzoneActive : {}) }}
           onDragOver={(e) => {
@@ -572,6 +582,16 @@ const S: Record<string, React.CSSProperties> = {
     marginBottom: 8,
     lineHeight: 1.5,
   },
+  calloutBlue: {
+    padding: 10,
+    background: "#e8f4ff",
+    border: "2px solid #1a5a8c",
+    color: "#1a3a5c",
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 1.5,
+  },
+  tipList: { margin: "6px 0 6px 18px", padding: 0 },
   label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", fontWeight: 700 },
   fileInput: { padding: 8, border: "2px dashed #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer" },
   dropzone: {
