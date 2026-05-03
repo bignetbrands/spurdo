@@ -3,32 +3,23 @@
 import { useState, useCallback, useEffect } from "react";
 
 // ============================================================
-// BANK PANEL
-// ============================================================
-// Read-only window into the meme bank GitHub repo.
-//   - Shows count + repo slug + when last refreshed
-//   - "↻ refresh" force-refreshes the manifest cache
-//   - Lists tags discovered across all entries (helps verify pillar matching)
-//   - Shows a thumbnail grid of bank contents for quick eyeballing
-//
-// Bank contents are managed via git push to the source repo, not in
-// the dashboard. This panel is for visibility, not editing.
+// BANK PANEL — memedepot version
 // ============================================================
 
 type LogFn = (msg: string, type?: "info" | "success" | "error" | "warn") => void;
 
 interface MemeEntry {
-  filename: string;
+  id: string;
   rawUrl: string;
-  tags: string[];
-  primaryPillar?: string;
-  sizeBytes?: number;
+  source: "scraped" | "fallback";
 }
 
 interface BankManifest {
   fetchedAt: string;
-  repoSlug: string;
+  source: string;
   count: number;
+  scrapedCount: number;
+  fallbackCount: number;
   entries: MemeEntry[];
   error?: string;
 }
@@ -59,7 +50,10 @@ export function BankPanel({ authedFetch, addLog }: Props) {
         }
         setManifest(data.manifest);
         if (force) {
-          addLog(`bank refreshed: ${data.manifest.count} memes from ${data.manifest.repoSlug}`, "success");
+          addLog(
+            `bank refreshed: ${data.manifest.count} memes from ${data.manifest.source}`,
+            "success"
+          );
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -74,16 +68,6 @@ export function BankPanel({ authedFetch, addLog }: Props) {
   useEffect(() => {
     fetchManifest(false);
   }, [fetchManifest]);
-
-  // Aggregate tag counts across the bank for visibility
-  const tagCounts = (() => {
-    if (!manifest) return [] as Array<[string, number]>;
-    const counts = new Map<string, number>();
-    for (const e of manifest.entries) {
-      for (const t of e.tags) counts.set(t, (counts.get(t) || 0) + 1);
-    }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  })();
 
   const previewEntries = manifest
     ? showAll
@@ -100,32 +84,34 @@ export function BankPanel({ authedFetch, addLog }: Props) {
         </button>
       </div>
       <p style={S.hint}>
-        curated authentic memes from a github repo. push images to the repo, click refresh, they appear here. used by COMPOSE when provider = bank.
+        community-curated memes scraped from memedepot. anyone can submit there. cached for 1 hour, refresh to pick up new uploads. used by COMPOSE when provider = bank.
       </p>
 
       {error && (
         <div style={S.errorBox}>
           <strong>error:</strong> {error}
           <div style={S.hint}>
-            common fixes: (1) create the repo bignetbrands/spurdo-memes with a /memes folder, (2) push at least one image, (3) set GITHUB_TOKEN env in vercel if rate-limited
+            check that memedepot.com/d/{`{slug}`} exists and has at least one image. set MEMEDEPOT_SLUG env if your slug differs from the project id.
           </div>
         </div>
       )}
 
-      {manifest && !error && (
+      {manifest && (
         <>
           <div style={S.summaryRow}>
             <div style={S.summaryItem}>
-              <div style={S.summaryLabel}>memes</div>
+              <div style={S.summaryLabel}>total memes</div>
               <div style={{ ...S.summaryValue, color: manifest.count > 0 ? "#0a8c3a" : "#c92020" }}>
                 {manifest.count}
               </div>
             </div>
             <div style={S.summaryItem}>
-              <div style={S.summaryLabel}>repo</div>
-              <div style={{ ...S.summaryValue, fontSize: 11, fontFamily: "monospace", wordBreak: "break-all" }}>
-                {manifest.repoSlug}
-              </div>
+              <div style={S.summaryLabel}>scraped live</div>
+              <div style={S.summaryValue}>{manifest.scrapedCount}</div>
+            </div>
+            <div style={S.summaryItem}>
+              <div style={S.summaryLabel}>fallback</div>
+              <div style={S.summaryValue}>{manifest.fallbackCount}</div>
             </div>
             <div style={S.summaryItem}>
               <div style={S.summaryLabel}>last fetched</div>
@@ -135,38 +121,40 @@ export function BankPanel({ authedFetch, addLog }: Props) {
             </div>
           </div>
 
+          {manifest.error && (
+            <div style={S.warnBox}>
+              <strong>scrape warning:</strong> {manifest.error}
+              <div style={S.hint}>serving fallback entries from MEMEDEPOT_FALLBACK_IDS env var.</div>
+            </div>
+          )}
+
+          <div style={S.linkRow}>
+            <a href={`https://${manifest.source}`} target="_blank" rel="noopener noreferrer" style={S.link}>
+              ↗ open {manifest.source}
+            </a>
+          </div>
+
           {manifest.count === 0 ? (
             <div style={S.empty}>
-              bank is empty. create <code>bignetbrands/spurdo-memes</code> with a <code>/memes</code> folder and push some pngs.
+              bank is empty. upload some authentic spurdo memes at <strong>memedepot.com/d/spurdo</strong>, then click refresh.
             </div>
           ) : (
             <>
-              {tagCounts.length > 0 && (
-                <div style={S.tagBlock}>
-                  <div style={S.envBoxTitle}>tags discovered ({tagCounts.length})</div>
-                  <div style={S.tagList}>
-                    {tagCounts.slice(0, 30).map(([tag, n]) => (
-                      <span key={tag} style={S.tagChip}>
-                        {tag} <span style={S.tagCount}>×{n}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <div style={S.thumbGrid}>
                 {previewEntries.map((e) => (
                   <a
-                    key={e.filename}
+                    key={e.id}
                     href={e.rawUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={S.thumbLink}
-                    title={`${e.filename}\ntags: ${e.tags.join(", ")}`}
+                    title={`${e.id}\nsource: ${e.source}`}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={e.rawUrl} alt={e.filename} style={S.thumbImg} loading="lazy" />
-                    <div style={S.thumbName}>{e.filename}</div>
+                    <img src={e.rawUrl} alt={e.id} style={S.thumbImg} loading="lazy" />
+                    <div style={S.thumbName}>
+                      {e.source === "scraped" ? "🌐" : "📌"} {e.id.slice(0, 8)}…
+                    </div>
                   </a>
                 ))}
               </div>
@@ -188,17 +176,15 @@ const S: Record<string, React.CSSProperties> = {
   cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   h2: { fontSize: 16, margin: 0, letterSpacing: 1 },
   hint: { fontSize: 12, color: "#5a3820", margin: "8px 0 14px", fontStyle: "italic" },
-  envBoxTitle: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, color: "#5a3820" },
   errorBox: { padding: 12, background: "#ffeaea", border: "2px solid #c92020", color: "#c92020", marginBottom: 12, fontSize: 13 },
-  summaryRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 16 },
+  warnBox: { padding: 10, background: "#fff5d5", border: "2px solid #a06800", color: "#a06800", marginBottom: 12, fontSize: 12 },
+  summaryRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 16 },
   summaryItem: { padding: 10, background: "#f5e9c9", border: "2px solid #1a1a1a" },
   summaryLabel: { fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", marginBottom: 4 },
   summaryValue: { fontSize: 18, fontWeight: 700 },
+  linkRow: { marginBottom: 12 },
+  link: { fontFamily: "monospace", fontSize: 12, color: "#1a1a1a", textDecoration: "underline" },
   empty: { fontStyle: "italic", color: "#888", padding: 12, textAlign: "center", background: "#f8f0d5", border: "2px dashed #1a1a1a" },
-  tagBlock: { marginBottom: 16, padding: 10, background: "#f5e9c9", border: "2px solid #1a1a1a" },
-  tagList: { display: "flex", flexWrap: "wrap", gap: 4 },
-  tagChip: { fontFamily: "monospace", fontSize: 11, padding: "2px 6px", background: "#fff", border: "1px solid #1a1a1a" },
-  tagCount: { color: "#888", marginLeft: 2 },
   thumbGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8, marginBottom: 12 },
   thumbLink: { textDecoration: "none", color: "#1a1a1a", border: "2px solid #1a1a1a", background: "#fff", padding: 4, display: "flex", flexDirection: "column", gap: 4 },
   thumbImg: { width: "100%", height: 100, objectFit: "cover", display: "block", background: "#f8f0d5" },

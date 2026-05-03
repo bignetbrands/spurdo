@@ -81,13 +81,13 @@ export async function generateImage(
     const meme = await pickMemeForPillar(opts.pillarId);
     if (!meme) {
       throw new Error(
-        "meme bank is empty. push images to the bank repo (see /bot LORA & BANK panel) or switch provider to 'fal'/'openai'."
+        "meme bank is empty. upload images at memedepot.com/d/spurdo (or set MEMEDEPOT_FALLBACK_IDS env), then click refresh in /bot."
       );
     }
     return {
       imageUrl: meme.rawUrl,
       provider: "bank",
-      promptSent: `[bank] ${meme.filename} · pillar=${opts.pillarId} · tags=[${meme.tags.join(", ")}]`,
+      promptSent: `[bank] memedepot:${meme.id} (${meme.source}) · pillar=${opts.pillarId}`,
       elapsedMs: Date.now() - startTime,
     };
   }

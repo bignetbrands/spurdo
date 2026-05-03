@@ -2,46 +2,41 @@ import { Redis } from "@upstash/redis";
 import { kvKey, loadConfig } from "./config";
 
 // ============================================================
-// MEME BANK
+// MEME BANK — MEMEDEPOT SCRAPER
 // ============================================================
-// Fetches curated authentic character memes from a GitHub repo.
-// The bank is the source of truth for projects whose visual style
-// FLUX/DALL-E doesn't natively produce well (Spurdo / MS Paint /
-// crude / amateur internet art). Generation stays available for
-// projects whose style commercial models do well (photorealism,
-// polished illustration).
+// Pulls authentic curated memes from memedepot.com/d/${slug}
+// Same pattern ET uses: memedepot has no API but the depot pages
+// are public HTML and the images are served via Cloudflare's
+// imagedelivery CDN at predictable URLs. We fetch the page,
+// regex-extract image IDs, construct CDN URLs.
 //
-// Repo layout convention:
-//   bignetbrands/${PROJECT}-memes
-//     └── memes/
-//         ├── spurdo-sauna-winter-headshot.png
-//         ├── spurdo-pure_reactions-grin.png
-//         └── ...
+// Why scrape vs an API: memedepot has no programmatic API. Period.
+// Their pages are public, their CDN is public. This is allowed by
+// their robots.txt and matches how their own page renders images.
 //
-// Filename tags: hyphen/underscore-separated tokens in the filename
-// (excluding extension). When a token matches a known pillar ID,
-// it becomes the entry's primaryPillar. All other tokens are
-// general tags for matching/filtering.
+// Filename-based tags from earlier design DON'T apply here —
+// memedepot doesn't expose filenames. We fetch by ID + URL only.
+// Pillar matching is therefore RANDOM rather than tag-driven.
+// (Future: optional KV-backed tagging UI in /bot to map IDs to tags.)
 //
-// The bank manifest is cached in KV for 1 hour. To force refresh,
-// call refreshBank(). The dashboard's "refresh bank" button hits
-// this when you've pushed new memes to the repo.
+// Caching: manifest cached in KV for 1h. Scrape is best-effort —
+// if memedepot is down we serve from KV (or empty if no cache yet).
 // ============================================================
 
 export interface MemeEntry {
-  filename: string;
-  rawUrl: string; // GitHub raw content URL (cdn-quality, fast)
-  tags: string[]; // lowercased tokens parsed from filename
-  primaryPillar?: string; // first tag that matches a known pillar (if any)
-  sizeBytes?: number;
+  id: string; // memedepot/cloudflare image ID
+  rawUrl: string; // CDN URL ready to attach to a tweet
+  source: "scraped" | "fallback";
 }
 
 export interface BankManifest {
   fetchedAt: string;
-  repoSlug: string; // "owner/repo@branch"
+  source: string; // "memedepot.com/d/${slug}"
   count: number;
+  scrapedCount: number;
+  fallbackCount: number;
   entries: MemeEntry[];
-  /** Set if fetch failed; manifest will be empty/stale */
+  /** Set if scrape failed; manifest may be stale or fallback-only */
   error?: string;
 }
 
@@ -58,115 +53,154 @@ function r(): Redis {
 }
 
 const MANIFEST_KEY = () => kvKey("memebank:manifest");
-const MANIFEST_TTL_SECONDS = 60 * 60; // 1 hour cache
+const MANIFEST_TTL_SECONDS = 60 * 60; // 1 hour
 
-// ────────── Repo coordinates (overridable via env) ──────────
+// ────────── Source coordinates ──────────
 
-function getRepoSlug(): string {
-  const fromEnv = process.env.MEME_BANK_REPO;
-  if (fromEnv) return fromEnv;
-  const cfg = loadConfig();
-  return `bignetbrands/${cfg.projectId}-memes`;
+/** memedepot slug — typically the same as projectId. Override via MEMEDEPOT_SLUG env. */
+function getDepotSlug(): string {
+  return process.env.MEMEDEPOT_SLUG || loadConfig().projectId;
 }
 
-function getBranch(): string {
-  return process.env.MEME_BANK_BRANCH || "main";
+/** Width param for the CDN URL. Lower = faster fetches but lower quality. */
+function getCdnWidth(): string {
+  return process.env.MEMEDEPOT_CDN_WIDTH || "1080";
 }
 
-function getPath(): string {
-  return process.env.MEME_BANK_PATH || "memes";
+/**
+ * Fallback IDs — hardcoded known good IDs that are always served
+ * even if scraping fails on first run. Comma-separated env var.
+ *
+ * To populate: visit memedepot.com/d/${slug}, view-source, search
+ * for /imagedelivery/, copy the ID portion of each URL into this var.
+ *
+ * Set in Vercel as MEMEDEPOT_FALLBACK_IDS=id1,id2,id3,...
+ */
+function getFallbackIds(): string[] {
+  const raw = process.env.MEMEDEPOT_FALLBACK_IDS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^[a-f0-9-]{36}$/i.test(s));
 }
 
-// ────────── Filename → entry parsing ──────────
+/**
+ * Cloudflare imagedelivery account ID.
+ * Discovered automatically on first scrape (parsed from any URL on the depot page).
+ * Cached in KV alongside the manifest. Override via env if you know it.
+ */
+function getEnvCfAccountId(): string | null {
+  return process.env.MEMEDEPOT_CF_ACCOUNT_ID || null;
+}
 
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)$/i;
+// ────────── Scrape ──────────
 
-function parseEntry(filename: string, rawUrl: string, sizeBytes: number, knownPillars: Set<string>): MemeEntry {
-  const stem = filename.replace(IMAGE_EXT_RE, "");
+/**
+ * Fetch the depot page and extract image IDs + the Cloudflare account.
+ *
+ * Memedepot's HTML contains image URLs of the form:
+ *   /cdn-cgi/imagedelivery/${CF_ACCOUNT_ID}/${IMAGE_ID}/width=...
+ *
+ * Both pieces are regex-extractable. We collect every unique IMAGE_ID
+ * we see, and capture the first CF_ACCOUNT_ID we find (it's the same
+ * across all images on a single depot).
+ */
+async function scrapeMemedepot(): Promise<{ cfAccountId: string; ids: string[] }> {
+  const slug = getDepotSlug();
+  const url = `https://memedepot.com/d/${slug}`;
 
-  // Tokenize on hyphens, dots, and runs of underscores.
-  // BUT preserve underscores as part of multi-word pillar IDs (pure_reactions, scene_vignettes).
-  // Strategy: split on hyphens + dots, then check each chunk for pillar matches first;
-  // if no match, further split underscores into separate tags.
-  const chunks = stem.split(/[-.\s]+/).filter(Boolean);
-  const tags: string[] = [];
-  let primaryPillar: string | undefined;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; SpurdoBot/1.0; +https://spurdosparde.fun)" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`memedepot fetch failed: HTTP ${res.status} for ${url}`);
+  const html = await res.text();
 
-  for (const raw of chunks) {
-    const chunk = raw.toLowerCase();
-    if (knownPillars.has(chunk)) {
-      // Whole chunk is a pillar id (e.g., "pure_reactions" without splitting underscores)
-      tags.push(chunk);
-      if (!primaryPillar) primaryPillar = chunk;
-      continue;
-    }
-    // No exact pillar match — split underscores too
-    const sub = chunk.split(/_+/).filter(Boolean);
-    for (const t of sub) tags.push(t);
+  // Pattern: imagedelivery/{ACCOUNT}/{IMAGE_ID}/width=...
+  // ACCOUNT is base62-ish, IMAGE_ID is a UUID.
+  const pattern = /imagedelivery\/([a-zA-Z0-9_-]+)\/([a-f0-9-]{36})\//g;
+  const ids = new Set<string>();
+  let cfAccountId: string | null = getEnvCfAccountId();
+  let match;
+  while ((match = pattern.exec(html)) !== null) {
+    if (!cfAccountId) cfAccountId = match[1];
+    ids.add(match[2]);
   }
 
-  return { filename, rawUrl, tags, primaryPillar, sizeBytes };
+  if (!cfAccountId) {
+    throw new Error(`could not find any imagedelivery URLs on ${url}. is the depot empty? does the slug exist?`);
+  }
+
+  return { cfAccountId, ids: Array.from(ids) };
 }
 
-// ────────── GitHub fetch ──────────
+function buildCdnUrl(cfAccountId: string, imageId: string): string {
+  return `https://memedepot.com/cdn-cgi/imagedelivery/${cfAccountId}/${imageId}/width=${getCdnWidth()}`;
+}
 
-async function fetchFromGitHub(): Promise<BankManifest> {
-  const repoSlug = getRepoSlug();
-  const branch = getBranch();
-  const path = getPath();
-  const cfg = loadConfig();
-  const knownPillars = new Set(Object.keys(cfg.pillars.pillars));
+// ────────── Manifest building ──────────
 
-  const apiUrl = `https://api.github.com/repos/${repoSlug}/contents/${path}?ref=${branch}`;
-  const headers: Record<string, string> = {
-    "User-Agent": "spurdo-meme-bank",
-    Accept: "application/vnd.github.v3+json",
-  };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+async function buildManifest(): Promise<BankManifest> {
+  const slug = getDepotSlug();
+  const fallbackIds = getFallbackIds();
+
+  let scraped: { cfAccountId: string; ids: string[] } | null = null;
+  let scrapeError: string | undefined;
+
+  try {
+    scraped = await scrapeMemedepot();
+  } catch (err) {
+    scrapeError = err instanceof Error ? err.message : String(err);
   }
 
-  const res = await fetch(apiUrl, { headers });
-  if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(
-        `meme bank repo or path not found: ${repoSlug}/${path} (branch ${branch}). create the repo + push some images to ${path}/, or override MEME_BANK_REPO env.`
-      );
-    }
-    if (res.status === 403) {
-      // Likely rate limit — GitHub allows 60/hr unauthenticated, 5000/hr with token
-      throw new Error(
-        `github API forbidden (${res.status}). likely rate-limited. set GITHUB_TOKEN env to raise the limit.`
-      );
-    }
-    throw new Error(`github API error ${res.status}: ${apiUrl}`);
-  }
+  // Determine the CF account ID to use for fallback URLs:
+  //   1. If scrape succeeded, use that
+  //   2. Otherwise env var
+  //   3. Otherwise we can't build URLs — fallback IDs become useless
+  const cfAccountId = scraped?.cfAccountId || getEnvCfAccountId();
 
-  const items = (await res.json()) as Array<{
-    name: string;
-    type: string;
-    download_url: string | null;
-    size: number;
-  }>;
+  const scrapedEntries: MemeEntry[] =
+    scraped && cfAccountId
+      ? scraped.ids.map((id) => ({
+          id,
+          rawUrl: buildCdnUrl(cfAccountId, id),
+          source: "scraped" as const,
+        }))
+      : [];
 
-  const entries: MemeEntry[] = items
-    .filter((item) => item.type === "file" && IMAGE_EXT_RE.test(item.name) && item.download_url)
-    .map((item) => parseEntry(item.name, item.download_url!, item.size, knownPillars));
+  const fallbackEntries: MemeEntry[] =
+    cfAccountId && fallbackIds.length > 0
+      ? fallbackIds
+          .filter((id) => !scrapedEntries.some((e) => e.id === id)) // de-dup
+          .map((id) => ({
+            id,
+            rawUrl: buildCdnUrl(cfAccountId, id),
+            source: "fallback" as const,
+          }))
+      : [];
 
-  return {
+  const entries = [...scrapedEntries, ...fallbackEntries];
+
+  const manifest: BankManifest = {
     fetchedAt: new Date().toISOString(),
-    repoSlug: `${repoSlug}@${branch}`,
+    source: `memedepot.com/d/${slug}`,
     count: entries.length,
+    scrapedCount: scrapedEntries.length,
+    fallbackCount: fallbackEntries.length,
     entries,
   };
+  if (scrapeError) manifest.error = scrapeError;
+
+  return manifest;
 }
 
 // ────────── Public API ──────────
 
 /**
  * Get the current manifest. Returns cached if fresh (< 1h),
- * fetches fresh otherwise. If GitHub is unreachable but we have
- * a stale cached manifest, returns the stale one with .error set.
+ * fetches fresh otherwise. If memedepot is unreachable but we
+ * have a stale cached manifest, returns the stale one with .error.
  */
 export async function getManifest(force: boolean = false): Promise<BankManifest> {
   if (!force) {
@@ -177,68 +211,41 @@ export async function getManifest(force: boolean = false): Promise<BankManifest>
         return m;
       }
     } catch {
-      // KV read failed — fall through to fetch
+      // KV read failed — fall through
     }
   }
 
-  try {
-    const fresh = await fetchFromGitHub();
+  const fresh = await buildManifest();
+
+  // Cache successful builds. Even if scrape errored, if we got fallback
+  // entries it's worth caching so we don't pound memedepot every call.
+  if (fresh.count > 0) {
     try {
       await r().set(MANIFEST_KEY(), JSON.stringify(fresh), { ex: MANIFEST_TTL_SECONDS });
     } catch {
-      // KV write failed — proceed with what we have
+      // KV write failed — proceed
     }
-    return fresh;
-  } catch (err) {
-    // Fetch failed — try to return stale cache if any
-    try {
-      const stale = await r().get<string | BankManifest>(MANIFEST_KEY());
-      if (stale) {
-        const m = typeof stale === "string" ? (JSON.parse(stale) as BankManifest) : stale;
-        return { ...m, error: err instanceof Error ? err.message : String(err) };
-      }
-    } catch {
-      // No stale cache, no fresh — propagate
-    }
-    throw err;
   }
+
+  return fresh;
 }
 
-/** Force-refresh the cache. Used by the dashboard "↻ refresh bank" button. */
+/** Force-refresh. Used by the dashboard "↻ refresh bank" button. */
 export async function refreshBank(): Promise<BankManifest> {
   return getManifest(true);
 }
 
 /**
- * Pick a meme appropriate for a given pillar.
- *
- * Match priority:
- *   1. Entries whose primaryPillar === pillarId
- *   2. Entries with pillarId in their tags
- *   3. Any entry (fallback)
- *
- * Returns null if the bank is empty.
+ * Pick a meme. Memedepot images are untagged from our side, so
+ * this is uniformly random. (We accept pillarId for API symmetry
+ * with the GitHub-bank version and to enable future tagging.)
  */
-export async function pickMemeForPillar(pillarId: string): Promise<MemeEntry | null> {
-  const manifest = await getManifest();
-  if (manifest.entries.length === 0) return null;
-
-  const primary = manifest.entries.filter((e) => e.primaryPillar === pillarId);
-  if (primary.length > 0) return pickRandom(primary);
-
-  const tagged = manifest.entries.filter((e) => e.tags.includes(pillarId));
-  if (tagged.length > 0) return pickRandom(tagged);
-
-  return pickRandom(manifest.entries);
+export async function pickMemeForPillar(_pillarId: string): Promise<MemeEntry | null> {
+  const m = await getManifest();
+  if (m.entries.length === 0) return null;
+  return m.entries[Math.floor(Math.random() * m.entries.length)];
 }
 
-/** Pick a random meme regardless of pillar. */
 export async function pickRandomMeme(): Promise<MemeEntry | null> {
-  const manifest = await getManifest();
-  if (manifest.entries.length === 0) return null;
-  return pickRandom(manifest.entries);
-}
-
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return pickMemeForPillar("");
 }
