@@ -63,6 +63,7 @@ export async function GET(
         trainingSetFilename: job.trainingSetFilename,
         trainingSteps: job.trainingSteps,
         trainedForStack: job.trainedForStack,
+        artStyle: job.artStyle,
       });
     } catch {
       // Registry write failed — job is still successful, just not in registry

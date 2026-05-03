@@ -49,6 +49,17 @@ export async function POST(request: Request) {
   }
   const notes = typeof form.get("notes") === "string" ? (form.get("notes") as string) : undefined;
 
+  // Parse art style — operator picks photorealistic vs mspaint, default 'auto'
+  // (which resolves to project's gen stack default).
+  const artStyleRaw = form.get("artStyle");
+  let artStyle: "photorealistic" | "mspaint" | "auto" = "auto";
+  if (typeof artStyleRaw === "string") {
+    const v = artStyleRaw.trim().toLowerCase();
+    if (v === "photorealistic" || v === "mspaint" || v === "auto") {
+      artStyle = v;
+    }
+  }
+
   // ── Determine input mode: images[] or zip ──
   const images = form.getAll("images").filter((v): v is File => v instanceof File && v.size > 0);
   const zipEntry = form.get("zip");
@@ -156,17 +167,17 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Submit training job (stack-aware) ──
-  let trainingResult: { requestId: string; endpoint: string; trainedForStack: ActiveJob["trainedForStack"] };
+  // ── Submit training job (stack-aware + art-style-aware) ──
+  let trainingResult: Awaited<ReturnType<typeof submitTrainingJob>>;
   try {
-    trainingResult = await submitTrainingJob(imagesDataUrl, steps);
+    trainingResult = await submitTrainingJob(imagesDataUrl, steps, artStyle);
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: `Fal training submit failed: ${err instanceof Error ? err.message : err}` },
       { status: 502 }
     );
   }
-  const { requestId, endpoint: trainingEndpoint, trainedForStack } = trainingResult;
+  const { requestId, endpoint: trainingEndpoint, trainedForStack, artStyleUsed } = trainingResult;
 
   // ── Persist job tracker ──
   const jobId = `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -181,6 +192,7 @@ export async function POST(request: Request) {
     trainingSetFilename: originalFilename,
     trainingEndpoint,
     trainedForStack,
+    artStyle: artStyleUsed,
   };
   await saveJob(job);
 
@@ -193,5 +205,6 @@ export async function POST(request: Request) {
     fileCount: images.length || 1,
     trainingEndpoint,
     trainedForStack,
+    artStyle: artStyleUsed,
   });
 }

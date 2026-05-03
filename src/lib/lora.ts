@@ -31,6 +31,9 @@ export interface LoraEntry {
   trainingSteps?: number;
   /** Which gen stack produced this LoRA. Used to detect mismatches. */
   trainedForStack?: "flux-photoreal" | "sdxl-stylized";
+  /** Which art style was selected at training time. Affects how the
+   *  resulting LoRA behaves at inference (style preservation vs character). */
+  artStyle?: "photorealistic" | "mspaint";
   active: boolean;
 }
 
@@ -50,6 +53,8 @@ export interface ActiveJob {
   trainingEndpoint?: string;
   /** Which gen stack the resulting LoRA is for */
   trainedForStack?: "flux-photoreal" | "sdxl-stylized";
+  /** Art style picked for training */
+  artStyle?: "photorealistic" | "mspaint";
 }
 
 // ────────── KV helpers ──────────
@@ -216,6 +221,38 @@ export function resolveTrainingEndpoint(): { endpoint: string; trainedForStack: 
 }
 
 /**
+ * Art style of the training set. Affects training params:
+ *
+ * - "photorealistic": is_style=false (treat as character LoRA — Fal's
+ *   trainer will optimize for face/anatomy preservation). Defaults work
+ *   well for portraits, polished illustrated characters, anything where
+ *   the model SHOULD render as photoreal.
+ *
+ * - "mspaint": is_style=true (treat as style LoRA — trainer applies
+ *   style-LoRA techniques: less attention to specific subjects, more
+ *   to visual style/aesthetic). Combined with elevated step count to
+ *   push the trained style harder. Output at inference still shows FLUX's
+ *   photoreal bias to some degree — for fully amateur MS-Paint output,
+ *   the bank approach (memedepot) remains the most reliable source.
+ *
+ * - "auto" (default): defer to the project's genStack:
+ *     flux-photoreal → photorealistic
+ *     sdxl-stylized   → mspaint
+ *     bank-only / openai-only → photorealistic
+ */
+export type TrainingArtStyle = "photorealistic" | "mspaint" | "auto";
+
+/**
+ * Resolve "auto" to a concrete art style based on the project's gen stack.
+ */
+function resolveArtStyle(requested: TrainingArtStyle): "photorealistic" | "mspaint" {
+  if (requested !== "auto") return requested;
+  const cfg = loadConfig();
+  if (cfg.imagePrompts.genStack === "sdxl-stylized") return "mspaint";
+  return "photorealistic";
+}
+
+/**
  * Submit a LoRA training job to the active project's stack endpoint.
  * Returns the request_id. Caller should poll status via pollTrainingJob.
  *
@@ -226,40 +263,54 @@ export function resolveTrainingEndpoint(): { endpoint: string; trainedForStack: 
  */
 export async function submitTrainingJob(
   imagesDataUrl: string,
-  steps: number = 1000
-): Promise<{ requestId: string; endpoint: string; trainedForStack: ActiveJob["trainedForStack"] }> {
+  steps: number = 1000,
+  artStyle: TrainingArtStyle = "auto"
+): Promise<{ requestId: string; endpoint: string; trainedForStack: ActiveJob["trainedForStack"]; artStyleUsed: "photorealistic" | "mspaint" }> {
   ensureFalConfigured();
   const { endpoint, trainedForStack } = resolveTrainingEndpoint();
+  const resolvedStyle = resolveArtStyle(artStyle);
 
-  // Stack-specific input shape:
-  //   flux-photoreal: images_data_url + steps + create_masks + is_style
-  //   sdxl-stylized:  images_data_url + steps + (other SDXL-specific)
+  // Build the training payload. Stack and art style both influence params.
+  // FLUX trainer params:
+  //   - is_style: true → trainer treats this as a STYLE LoRA, optimizing
+  //     for aesthetic capture rather than subject identity. Output LoRAs
+  //     pull the model harder toward the trained look.
+  //   - is_style: false → CHARACTER LoRA, focuses on face/anatomy
+  //     preservation. Output LoRAs reproduce the trained subject reliably
+  //     but inherit the base model's overall aesthetic.
+  //   - For Spurdo (brown bear in MS Paint): is_style: true is closer
+  //     to right because the AESTHETIC is the hard-to-capture part.
+  //     The character is simple enough that style-mode learns it too.
   let input: Record<string, unknown>;
   if (trainedForStack === "sdxl-stylized") {
+    // SDXL training isn't on Fal — this branch throws via resolveTrainingEndpoint.
+    // Defensive: still build a valid payload in case operator points at a
+    // custom SDXL trainer URL via stackConfig.trainingEndpoint.
     input = {
       images_data_url: imagesDataUrl,
-      steps,
-      // SDXL training defaults — bias toward character consistency.
-      // Fal's fast-sdxl-lora-training accepts these standard fields.
-      learning_rate: 0.0004,
-      // Trigger word convention: SDXL identity LoRAs work best with a
-      // specific token. We use sp7rd0 by default (the project bible
-      // recommends this); operators can override per-job in M5+.
-      // Note: not all SDXL training endpoints accept `trigger_word`;
-      // ones that don't will ignore the field, which is harmless.
+      steps: resolvedStyle === "mspaint" ? Math.max(steps, 1500) : steps,
+      learning_rate: resolvedStyle === "mspaint" ? 0.0005 : 0.0004,
     };
   } else {
-    // FLUX (default)
+    // FLUX (real, working trainer)
     input = {
       images_data_url: imagesDataUrl,
-      steps,
+      // MS Paint style benefits from more training steps — the style is
+      // visually farther from FLUX's defaults so it needs more iterations
+      // to overcome the base model's bias.
+      steps: resolvedStyle === "mspaint" ? Math.max(steps, 1400) : steps,
       create_masks: true,
-      is_style: false,
+      is_style: resolvedStyle === "mspaint",
     };
   }
 
   const submitted = await fal.queue.submit(endpoint as never, { input: input as never });
-  return { requestId: submitted.request_id, endpoint, trainedForStack };
+  return {
+    requestId: submitted.request_id,
+    endpoint,
+    trainedForStack,
+    artStyleUsed: resolvedStyle,
+  };
 }
 
 /**

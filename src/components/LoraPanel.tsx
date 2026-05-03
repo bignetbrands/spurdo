@@ -26,6 +26,7 @@ interface LoraEntry {
   trainingSetFilename?: string;
   trainingSteps?: number;
   trainedForStack?: "flux-photoreal" | "sdxl-stylized";
+  artStyle?: "photorealistic" | "mspaint";
   active: boolean;
 }
 
@@ -42,6 +43,7 @@ interface ActiveJob {
   error?: string;
   trainingEndpoint?: string;
   trainedForStack?: "flux-photoreal" | "sdxl-stylized";
+  artStyle?: "photorealistic" | "mspaint";
 }
 
 interface Props {
@@ -58,6 +60,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [steps, setSteps] = useState(1000);
   const [notes, setNotes] = useState("");
+  const [artStyle, setArtStyle] = useState<"photorealistic" | "mspaint">("photorealistic");
   const [submitting, setSubmitting] = useState(false);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -140,6 +143,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
       const form = new FormData();
       for (const f of imageFiles) form.append("images", f);
       form.append("steps", String(steps));
+      form.append("artStyle", artStyle);
       if (notes.trim()) form.append("notes", notes.trim());
 
       const res = await authedFetch("/api/admin/lora/train", { method: "POST", body: form });
@@ -151,7 +155,10 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         return;
       }
 
-      addLog(`training job submitted — id ${data.jobId}, polling for progress`, "success");
+      addLog(
+        `training job submitted (${artStyle}) — id ${data.jobId}, polling for progress`,
+        "success"
+      );
 
       const initialJob: ActiveJob = {
         id: data.jobId,
@@ -161,6 +168,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         trainingSteps: steps,
         notes: notes.trim() || undefined,
         trainingSetFilename: `${imageFiles.length} images`,
+        artStyle,
       };
       setActiveJob(initialJob);
       startPolling(data.jobId);
@@ -173,7 +181,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
     } finally {
       setSubmitting(false);
     }
-  }, [imageFiles, steps, notes, authedFetch, addLog, startPolling]);
+  }, [imageFiles, steps, notes, artStyle, authedFetch, addLog, startPolling]);
 
   // ── Registry actions ──
   const setActive = useCallback(
@@ -242,6 +250,51 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
 
       {/* TRAIN FORM */}
       <div style={S.form}>
+        {/* ART STYLE PICKER — controls training params per style */}
+        <label style={S.label}>art style</label>
+        <div style={S.artStyleRow}>
+          <button
+            type="button"
+            onClick={() => setArtStyle("photorealistic")}
+            disabled={submitting || !!isTraining}
+            style={{
+              ...S.artStyleBtn,
+              ...(artStyle === "photorealistic" ? S.artStyleBtnActive : {}),
+            }}
+          >
+            <div style={S.artStyleBtnTitle}>📸 photorealistic</div>
+            <div style={S.artStyleBtnSub}>
+              clean illustration, polished cartoons, real-looking subjects.
+              <br />
+              <code>is_style=false</code> · default training
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setArtStyle("mspaint")}
+            disabled={submitting || !!isTraining}
+            style={{
+              ...S.artStyleBtn,
+              ...(artStyle === "mspaint" ? S.artStyleBtnActive : {}),
+            }}
+          >
+            <div style={S.artStyleBtnTitle}>🎨 ms paint / stylized</div>
+            <div style={S.artStyleBtnSub}>
+              amateur drawings, doodles, deliberately-crude art.
+              <br />
+              <code>is_style=true</code> · 1400+ steps · stronger style bias
+            </div>
+          </button>
+        </div>
+        {artStyle === "mspaint" && (
+          <div style={S.calloutAmber}>
+            <strong>⚠ honest caveat:</strong> FLUX is photoreal-first. <code>is_style=true</code> pushes
+            the trainer toward style preservation, but FLUX&apos;s base distribution still pulls output
+            toward polish. Bank (memedepot) remains the most reliable on-canon image source for fully
+            amateur styles. Use this for &quot;better than nothing on novel scenes&quot; — not as a bank replacement.
+          </div>
+        )}
+
         <label style={S.label}>training images (10-20 recommended)</label>
         <div
           style={{ ...S.dropzone, ...(dragActive ? S.dropzoneActive : {}) }}
@@ -396,6 +449,17 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
               <div key={entry.id} style={{ ...S.regEntry, ...(entry.active ? S.regEntryActive : {}) }}>
                 <div style={S.regEntryHeader}>
                   <strong>{entry.notes || "(no notes)"}</strong>
+                  {entry.artStyle && (
+                    <span
+                      style={{
+                        ...S.stackBadge,
+                        background: entry.artStyle === "mspaint" ? "#ffe6e6" : "#e6f4ff",
+                        color: entry.artStyle === "mspaint" ? "#aa3333" : "#3355aa",
+                      }}
+                    >
+                      {entry.artStyle === "mspaint" ? "🎨 ms paint" : "📸 photoreal"}
+                    </span>
+                  )}
                   {entry.trainedForStack && (
                     <span
                       style={{
@@ -482,6 +546,32 @@ const S: Record<string, React.CSSProperties> = {
   hint: { fontSize: 12, color: "#5a3820", margin: "8px 0 14px", fontStyle: "italic" },
   form: { display: "flex", flexDirection: "column", gap: 12 },
   formRow: { display: "flex", gap: 12 },
+  artStyleRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 },
+  artStyleBtn: {
+    padding: 12,
+    background: "#fff",
+    border: "2px solid #1a1a1a",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+    transition: "all 0.1s",
+  },
+  artStyleBtnActive: {
+    background: "#fff3b0",
+    borderColor: "#a06800",
+    boxShadow: "2px 2px 0 #a06800",
+  },
+  artStyleBtnTitle: { fontSize: 14, fontWeight: 700, marginBottom: 4 },
+  artStyleBtnSub: { fontSize: 11, color: "#5a3820", lineHeight: 1.4, fontFamily: "monospace" },
+  calloutAmber: {
+    padding: 10,
+    background: "#fff5d5",
+    border: "2px solid #a06800",
+    color: "#5a3820",
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 1.5,
+  },
   label: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820", fontWeight: 700 },
   fileInput: { padding: 8, border: "2px dashed #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer" },
   dropzone: {
