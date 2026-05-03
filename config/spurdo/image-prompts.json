@@ -2,7 +2,7 @@
   "model": "gpt-image-1",
   "size": "1024x1024",
   "quality": "medium",
-  "lockedPromptTemplate": "crude MS Paint drawing of spurdo spärde, a brown lumpy asymmetric bear head with two humps and a V-crease between them at the top of the head (NOT separate ears), 3-4 wavy horizontal forehead wrinkle lines, plain black oval eyes with no white highlights, walrus-mustache muzzle made of two cream/tan tilted ellipses (one on each side), black oval nose centered between the muzzle lobes, pink open grinning mouth showing white zipper teeth below the nose, bold uneven black outline, flat fill no shading no gradients, deliberately wobbly hand-drawn lines like an MS Paint sketch from 2008, pasted onto [SCENE] without lighting match or drop shadow as if cut and pasted in. The bear looks crude, charming, dumb, grinning. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cleaned up. NO text, NO logos, NO uniforms, NO weapons.",
+  "lockedPromptTemplate": "spurdo spärde meme drawn in early internet MS Paint style. brown rounded bean-shaped head, cream/yellow long oval mouth-muzzle area, tiny black dot eyes, big pink open smile, weird stretched face proportions, simple cartoon body that's stiff or awkward, oversized floppy hands, simple black-blob feet. Thick uneven black outlines, wobbly hand-drawn edges, no clean vector curves, looks slightly messy and amateur like it was drawn fast with a mouse in 2008. FLAT solid colors only — NO gradients, NO realistic lighting, NO shading. Set in [SCENE]. Low-resolution screenshot-like feel, meme-panel crop, simple flat background, imperfect anatomy. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cell-shaded, NOT modern digital art. NO text, NO logos, NO watermarks.",
   "scenesByPillar": {
     "pure_reactions": [
       "a flat plain off-white background with no scene, just spurdo centered as a portrait",
@@ -54,13 +54,14 @@
     "Copyrighted characters or branded IP"
   ],
   "visualCanonChecklist": [
-    "BROWN bear (not pink, not peach)",
-    "Two humps + V-crease at top of head (NOT pointy ears)",
-    "3-4 wavy forehead wrinkle lines",
-    "Plain black oval eyes, no highlights",
-    "Walrus-mustache muzzle (two cream/tan lobes)",
-    "Black oval nose centered between muzzle lobes",
-    "Pink open grinning mouth with visible zipper teeth",
-    "Bold black outline, MS Paint wobble"
+    "BROWN rounded bean-shaped head (not round teddy-bear, not anime)",
+    "Cream/yellow long oval mouth-muzzle area",
+    "Tiny black dot eyes (no white highlights, no anime sparkles)",
+    "Big pink open smile",
+    "Weird stretched face proportions — imperfect on purpose",
+    "Thick uneven black outlines, wobbly hand-drawn edges",
+    "FLAT solid colors only — no gradients, no shading, no realistic lighting",
+    "Low-res, screenshot-like, meme-panel feel",
+    "If body shown: stiff/awkward pose, oversized hands, blob feet"
   ]
 }

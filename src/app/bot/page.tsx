@@ -90,6 +90,7 @@ export default function BotDashboard() {
   const [selectedPillar, setSelectedPillar] = useState<string>("");
   const [includeImage, setIncludeImage] = useState(true);
   const [imageProvider, setImageProvider] = useState<"fal" | "openai">("fal");
+  const [loraScale, setLoraScale] = useState(1.0);
   const [composing, setComposing] = useState(false);
   const [composeResult, setComposeResult] = useState<GenerateResponse | null>(null);
   const [posting, setPosting] = useState(false);
@@ -187,6 +188,7 @@ export default function BotDashboard() {
           pillar: selectedPillar,
           generateImage: includeImage,
           imageProvider: imageProvider,
+          loraScale: imageProvider === "fal" ? loraScale : undefined,
         }),
       });
       const text = await res.text();
@@ -213,7 +215,7 @@ export default function BotDashboard() {
     } finally {
       setComposing(false);
     }
-  }, [selectedPillar, includeImage, imageProvider, authedFetch, addLog]);
+  }, [selectedPillar, includeImage, imageProvider, loraScale, authedFetch, addLog]);
 
   // ── M3: Activity + server log fetchers ──
   const fetchActivity = useCallback(async () => {
@@ -478,6 +480,25 @@ export default function BotDashboard() {
                 </select>
               </label>
             </div>
+
+            {includeImage && imageProvider === "fal" && (
+              <label style={S.label}>
+                lora strength: <span style={{ fontFamily: "monospace", fontSize: 13, color: "#1a1a1a" }}>{loraScale.toFixed(1)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={loraScale}
+                  onChange={(e) => setLoraScale(parseFloat(e.target.value))}
+                  disabled={composing}
+                  style={{ width: "100%" }}
+                />
+                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a3820", display: "flex", justifyContent: "space-between" }}>
+                  <span>0.5 = subtle</span><span>1.0 = default</span><span>1.5 = strong</span><span>2.0 = max</span>
+                </div>
+              </label>
+            )}
 
             <button onClick={compose} disabled={composing || !selectedPillar} style={S.btnPrimary}>
               {composing ? "🌀 generatin..." : "✨ generate"}

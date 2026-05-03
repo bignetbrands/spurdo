@@ -19,6 +19,7 @@ interface GenerateRequest {
   generateImage?: boolean;
   imageProvider?: "fal" | "openai";
   sceneOverride?: string;
+  loraScale?: number;
 }
 
 interface GenerateResponse {
@@ -121,6 +122,7 @@ export async function POST(request: Request) {
           tweetText: tweet.text,
           sceneOverride: body.sceneOverride,
           provider: body.imageProvider,
+          loraScale: body.loraScale,
         });
         result.image = {
           url: img.imageUrl,
