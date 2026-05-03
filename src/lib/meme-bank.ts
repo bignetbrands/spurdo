@@ -52,7 +52,16 @@ function r(): Redis {
   return _redis;
 }
 
-const MANIFEST_KEY = () => kvKey("memebank:manifest");
+const MANIFEST_KEY = () => {
+  // Version the cache key by the exclusion set. When operators add a new
+  // banned ID, the next call gets a clean cache miss + fresh scrape that
+  // honors the new list — no manual ↻ refresh required.
+  const excludes = Array.from(getExcludeIds()).sort().join(",");
+  // Short hash so the key doesn't get too long
+  let h = 0;
+  for (let i = 0; i < excludes.length; i++) h = ((h << 5) - h + excludes.charCodeAt(i)) | 0;
+  return kvKey(`memebank:manifest:v${(h >>> 0).toString(36)}`);
+};
 const MANIFEST_TTL_SECONDS = 60 * 60; // 1 hour
 
 // ────────── Source coordinates ──────────
@@ -79,10 +88,12 @@ function getCdnWidth(): string {
 function getFallbackIds(): string[] {
   const raw = process.env.MEMEDEPOT_FALLBACK_IDS;
   if (!raw) return [];
+  const excludeIds = getExcludeIds();
   return raw
     .split(",")
-    .map((s) => s.trim())
-    .filter((s) => /^[a-f0-9-]{36}$/i.test(s));
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => /^[a-f0-9-]{36}$/.test(s))
+    .filter((s) => !excludeIds.has(s));
 }
 
 /**
@@ -92,6 +103,32 @@ function getFallbackIds(): string[] {
  */
 function getEnvCfAccountId(): string | null {
   return process.env.MEMEDEPOT_CF_ACCOUNT_ID || null;
+}
+
+/**
+ * UUIDs to exclude from the scraped manifest. Used for the depot's
+ * profile banner image, any pinned UI assets, off-canon variants
+ * uploaded by accident, etc.
+ *
+ * Hardcoded list applies to all projects (we know specific bad IDs
+ * from incidents). Env var MEMEDEPOT_EXCLUDE_IDS adds project-specific
+ * additions (comma-separated UUIDs).
+ *
+ * Mirrors ET's BANNER_ID pattern but extended to multiple IDs.
+ */
+const HARDCODED_EXCLUDE_IDS = new Set<string>([
+  // Spurdo depot's banner image (reported by operator)
+  "1aa675c1-2040-4f0d-8149-3a84ab394b00",
+]);
+
+function getExcludeIds(): Set<string> {
+  const fromEnv = process.env.MEMEDEPOT_EXCLUDE_IDS;
+  if (!fromEnv) return HARDCODED_EXCLUDE_IDS;
+  const envIds = fromEnv
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => /^[a-f0-9-]{36}$/.test(s));
+  return new Set([...HARDCODED_EXCLUDE_IDS, ...envIds]);
 }
 
 // ────────── Scrape ──────────
@@ -121,11 +158,14 @@ async function scrapeMemedepot(): Promise<{ cfAccountId: string; ids: string[] }
   // ACCOUNT is base62-ish, IMAGE_ID is a UUID.
   const pattern = /imagedelivery\/([a-zA-Z0-9_-]+)\/([a-f0-9-]{36})\//g;
   const ids = new Set<string>();
+  const excludeIds = getExcludeIds();
   let cfAccountId: string | null = getEnvCfAccountId();
   let match;
   while ((match = pattern.exec(html)) !== null) {
+    const id = match[2].toLowerCase();
     if (!cfAccountId) cfAccountId = match[1];
-    ids.add(match[2]);
+    if (excludeIds.has(id)) continue; // skip banner / known bad IDs
+    ids.add(id);
   }
 
   if (!cfAccountId) {
