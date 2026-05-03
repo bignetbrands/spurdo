@@ -65,14 +65,143 @@ export interface VoiceConfig {
   exclusions: Record<string, string | boolean>;
 }
 
+// ============================================================
+// IMAGE GENERATION STACKS
+// ============================================================
+// A "gen stack" is a complete pipeline for producing images for
+// a project: base model + LoRA approach + prompt format + training
+// endpoint. Different stacks suit different visual styles. Each
+// project declares its stack in image-prompts.json; the dispatcher
+// in lib/image-gen.ts and lib/lora.ts route accordingly.
+//
+// Adding a new stack: add a literal here, add a branch in the
+// dispatcher, document the StackConfig shape in this comment.
+// ============================================================
+
+/**
+ * Identifiers for the supported generation stacks.
+ *
+ * - "flux-photoreal": Fal's flux-lora endpoint with optional identity LoRA.
+ *   Best for: photoreal / polished illustration / clean cartoon styles.
+ *   Native language prompting. What ET uses, what M2 originally shipped.
+ *
+ * - "sdxl-stylized": Fal's lora endpoint (SDXL base) with stacked LoRAs:
+ *   one for visual style (MS Paint, doodle, amateur internet art, etc.)
+ *   and one for character identity. Tag-based prompting (Pony/SDXL
+ *   convention). Best for: deliberately-amateur / stylized / non-photoreal.
+ *
+ * - "openai-only": OpenAI gpt-image-1. No LoRA support; use for projects
+ *   that need a fallback or have ultra-simple needs.
+ *
+ * - "bank-only": No generation at all. Image always pulled from memedepot.
+ *   Best for: meme-curation projects where generation can never beat
+ *   authentic source material (e.g., pixel art accounts, classic-meme accounts).
+ */
+export type GenStack = "flux-photoreal" | "sdxl-stylized" | "openai-only" | "bank-only";
+
+/** Type of LoRA in a stacked-LoRA setup */
+export type LoraRole = "identity" | "style";
+
+export interface StackedLora {
+  /** Public URL to the .safetensors file (Fal CDN, HuggingFace, Civitai etc) */
+  url: string;
+  /** Conceptual role — used for ordering and UI labels */
+  role: LoraRole;
+  /** Effect strength — 0.5 (subtle) to 1.5 (strong). Default 1.0. */
+  scale?: number;
+  /** Human-readable label for the dashboard */
+  label?: string;
+  /** Trigger word baked into the LoRA's training captions, if any */
+  triggerWord?: string;
+}
+
+/**
+ * Per-stack configuration. Different stacks expose different fields.
+ * Discriminated union on `stack`.
+ */
+export type StackConfig =
+  | {
+      stack: "flux-photoreal";
+      /** Fal endpoint for inference. Default: "fal-ai/flux-lora" */
+      inferenceEndpoint?: string;
+      /** Fal endpoint for LoRA training. Default: "fal-ai/flux-lora-fast-training" */
+      trainingEndpoint?: string;
+      /** Default identity LoRA scale at inference. */
+      defaultLoraScale?: number;
+      /** Number of inference steps. Default 28. */
+      numInferenceSteps?: number;
+      /** Guidance scale. FLUX likes low values (3-4). Default 3.5. */
+      guidanceScale?: number;
+    }
+  | {
+      stack: "sdxl-stylized";
+      /** Fal endpoint for inference. Default: "fal-ai/lora" (SDXL with LoRAs) */
+      inferenceEndpoint?: string;
+      /** Fal endpoint for LoRA training. Default: "fal-ai/fast-sdxl-lora-training" */
+      trainingEndpoint?: string;
+      /**
+       * Style LoRAs to ALWAYS stack on top of the identity LoRA.
+       * For Spurdo this should include an MS-Paint style LoRA.
+       * Identity LoRA is added separately from the project's active LoRA registry.
+       */
+      defaultStyleLoras?: StackedLora[];
+      /** Default identity LoRA scale. SDXL identity LoRAs often want 1.0-1.3. */
+      defaultIdentityScale?: number;
+      /**
+       * Quality-tag prefix for prompts. Pony/SDXL convention uses
+       * `score_9, score_8_up, score_7_up` to bias toward higher quality.
+       * Set to "" if your style LoRA dislikes them.
+       */
+      qualityTags?: string;
+      /** Negative prompt prefix. */
+      negativeTags?: string;
+      /** Inference steps. SDXL likes 25-40. Default 30. */
+      numInferenceSteps?: number;
+      /** Guidance scale. SDXL likes 6-9. Default 7.0. */
+      guidanceScale?: number;
+    }
+  | {
+      stack: "openai-only";
+      model?: string;
+      size?: string;
+      quality?: "low" | "medium" | "high";
+    }
+  | {
+      stack: "bank-only";
+      /** No fields needed — bank handles everything */
+    };
+
 export interface ImagePromptsConfig {
+  /**
+   * Which generation pipeline to use when the operator picks "fal" or
+   * triggers automatic generation. The dispatcher reads this and routes
+   * to the right stack. The bank provider always works regardless.
+   */
+  genStack: GenStack;
+  /** Stack-specific config. Schema depends on genStack. */
+  stackConfig?: StackConfig;
+  /**
+   * Image providers shown in the COMPOSE dropdown.
+   *   "bank" — pull from memedepot
+   *   "fal" — invoke the configured genStack (flux or sdxl)
+   *   "openai" — invoke openai-image directly (legacy fallback)
+   */
+  allowedProviders?: Array<"bank" | "fal" | "openai">;
+  allowedProvidersComment?: string;
+
+  // === Legacy / OpenAI-specific (still used) ===
   model: string;
   size: string;
   quality: "low" | "medium" | "high";
-  /** Image providers exposed in the COMPOSE dropdown for this project. Order matters; first is default. */
-  allowedProviders?: Array<"bank" | "fal" | "openai">;
-  allowedProvidersComment?: string;
+
+  // === Prompt content ===
+  /** Natural-language prompt template for FLUX/OpenAI. SDXL stacks override per-stack. */
   lockedPromptTemplate: string;
+  /**
+   * SDXL/Pony tag-based prompt template. Used only when genStack is sdxl-stylized.
+   * Comma-separated tags with [SCENE] placeholder.
+   */
+  lockedPromptTemplateTags?: string;
   scenesByPillar: Record<PillarId, string[]>;
   hardExclusions: string[];
   visualCanonChecklist: string[];

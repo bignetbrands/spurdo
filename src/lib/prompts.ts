@@ -84,17 +84,39 @@ export function buildTweetPrompt(
   return lines.join("\n");
 }
 
+export interface ImagePromptResult {
+  /** Positive prompt sent to the model */
+  prompt: string;
+  /** Negative prompt — only used by SDXL stack, empty otherwise */
+  negativePrompt: string;
+  /** Format used: "natural" for FLUX/OpenAI, "tags" for SDXL */
+  format: "natural" | "tags";
+  /** The chosen scene (for logs/audit) */
+  scene: string;
+}
+
 /**
  * Build the image generation prompt for a tweet.
- * Returns the FULL prompt (locked template + scene), ready for the image API.
+ *
+ * Stack-aware:
+ *   - flux-photoreal / openai-only / bank-only → uses lockedPromptTemplate
+ *     (natural language). Negative prompt is empty (FLUX doesn't use them
+ *     and OpenAI handles negatives differently).
+ *   - sdxl-stylized → uses lockedPromptTemplateTags (Pony/SDXL tag
+ *     convention). Prepends qualityTags from stackConfig. Returns
+ *     negativeTags from stackConfig as the negative prompt.
+ *
+ * If the stack expects tags but the project doesn't have a tag template,
+ * falls back to using the natural template (still produces output, just
+ * less optimal).
  */
 export function buildImagePrompt(
   cfg: ProjectConfig,
   pillarId: PillarId,
   tweetText: string,
   sceneOverride?: string
-): string {
-  const { lockedPromptTemplate, scenesByPillar } = cfg.imagePrompts;
+): ImagePromptResult {
+  const { lockedPromptTemplate, lockedPromptTemplateTags, scenesByPillar, genStack, stackConfig } = cfg.imagePrompts;
 
   // Pick a scene: explicit override > pillar's scene list > generic flat
   let scene = sceneOverride;
@@ -108,7 +130,28 @@ export function buildImagePrompt(
     scene = "a flat off-white background, just the character centered as a portrait";
   }
 
-  return lockedPromptTemplate.replace("[SCENE]", scene);
+  // Determine which format the active stack wants
+  const wantsTags = genStack === "sdxl-stylized";
+
+  if (wantsTags && lockedPromptTemplateTags) {
+    const sdxlConfig = stackConfig?.stack === "sdxl-stylized" ? stackConfig : null;
+    const qualityPrefix = sdxlConfig?.qualityTags ? sdxlConfig.qualityTags + ", " : "";
+    const negative = sdxlConfig?.negativeTags ?? "";
+    return {
+      prompt: qualityPrefix + lockedPromptTemplateTags.replace("[SCENE]", scene),
+      negativePrompt: negative,
+      format: "tags",
+      scene,
+    };
+  }
+
+  // Default: natural language (FLUX, OpenAI, fallback)
+  return {
+    prompt: lockedPromptTemplate.replace("[SCENE]", scene),
+    negativePrompt: "",
+    format: "natural",
+    scene,
+  };
 }
 
 /**

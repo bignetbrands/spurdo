@@ -156,16 +156,17 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Submit training job ──
-  let requestId: string;
+  // ── Submit training job (stack-aware) ──
+  let trainingResult: { requestId: string; endpoint: string; trainedForStack: ActiveJob["trainedForStack"] };
   try {
-    requestId = await submitTrainingJob(imagesDataUrl, steps);
+    trainingResult = await submitTrainingJob(imagesDataUrl, steps);
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: `Fal training submit failed: ${err instanceof Error ? err.message : err}` },
       { status: 502 }
     );
   }
+  const { requestId, endpoint: trainingEndpoint, trainedForStack } = trainingResult;
 
   // ── Persist job tracker ──
   const jobId = `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -178,6 +179,8 @@ export async function POST(request: Request) {
     trainingSteps: steps,
     notes,
     trainingSetFilename: originalFilename,
+    trainingEndpoint,
+    trainedForStack,
   };
   await saveJob(job);
 
@@ -188,5 +191,7 @@ export async function POST(request: Request) {
     status: "queued",
     inputMode: images.length > 0 ? "multi-image" : "zip",
     fileCount: images.length || 1,
+    trainingEndpoint,
+    trainedForStack,
   });
 }

@@ -25,6 +25,7 @@ interface LoraEntry {
   notes?: string;
   trainingSetFilename?: string;
   trainingSteps?: number;
+  trainedForStack?: "flux-photoreal" | "sdxl-stylized";
   active: boolean;
 }
 
@@ -39,6 +40,8 @@ interface ActiveJob {
   trainingSetFilename?: string;
   loraUrl?: string;
   error?: string;
+  trainingEndpoint?: string;
+  trainedForStack?: "flux-photoreal" | "sdxl-stylized";
 }
 
 interface Props {
@@ -234,7 +237,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
     <section style={S.card}>
       <h2 style={S.h2}>🧠 LORA TRAINING</h2>
       <p style={S.hint}>
-        train a Spurdo identity adapter on Fal. drop 10-20 on-canon images. takes ~10-15 min. trained LoRAs go to the registry below — click set active to use one.
+        train an identity LoRA on Fal. the project&apos;s active gen stack determines which Fal endpoint runs (FLUX vs SDXL). drop 10-20 on-canon images, training takes ~10-15 min. trained LoRAs auto-add to the registry — click set active to use one.
       </p>
 
       {/* TRAIN FORM */}
@@ -393,6 +396,17 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
               <div key={entry.id} style={{ ...S.regEntry, ...(entry.active ? S.regEntryActive : {}) }}>
                 <div style={S.regEntryHeader}>
                   <strong>{entry.notes || "(no notes)"}</strong>
+                  {entry.trainedForStack && (
+                    <span
+                      style={{
+                        ...S.stackBadge,
+                        background: entry.trainedForStack === "sdxl-stylized" ? "#e8f4ff" : "#fff5d5",
+                        color: entry.trainedForStack === "sdxl-stylized" ? "#1a5a8c" : "#a06800",
+                      }}
+                    >
+                      {entry.trainedForStack}
+                    </span>
+                  )}
                   {entry.active && <span style={S.activeBadge}>ACTIVE</span>}
                 </div>
                 <div style={S.regEntryMeta}>
@@ -506,6 +520,7 @@ const S: Record<string, React.CSSProperties> = {
   regEntryActive: { borderColor: "#0a8c3a", background: "#f0f8ea", borderWidth: 3 },
   regEntryHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 4 },
   activeBadge: { fontFamily: "monospace", fontSize: 10, padding: "2px 8px", background: "#0a8c3a", color: "#fff", borderRadius: 0 },
+  stackBadge: { fontFamily: "monospace", fontSize: 9, padding: "2px 6px", border: "1px solid currentColor", marginLeft: 6 },
   regEntryMeta: { fontFamily: "monospace", fontSize: 11, color: "#5a3820", marginBottom: 8 },
   regEntryActions: { display: "flex", gap: 6, flexWrap: "wrap" },
 };

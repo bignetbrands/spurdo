@@ -8,26 +8,32 @@ import { getActiveLoraUrl } from "./lora";
 import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
 import { pickMemeForPillar } from "./meme-bank";
-import type { PillarId } from "@/types";
+import type { PillarId, GenStack, StackConfig, StackedLora } from "@/types";
 
 // ============================================================
-// IMAGE GENERATION
+// IMAGE GENERATION — stack dispatcher
 // ============================================================
-// Two providers, abstracted behind a single interface:
+// Three image SOURCES (provider):
+//   • bank   — pull from memedepot, free, on-canon, no API
+//   • fal    — invoke the project's configured genStack (FLUX or SDXL)
+//   • openai — gpt-image-1 fallback
 //
-//   FAL (primary) — FLUX.1 [dev] with optional LoRA
-//     • Cheap (~$0.025-0.05/image)
-//     • Once we train the Spurdo LoRA in M2.5, character consistency
-//       comes from the weights — no reference image needed
-//     • Until LoRA is trained, falls back to FLUX base + visual canon
-//       in the prompt (works but drifts)
+// When provider=fal, the actual pipeline is decided by the project's
+// `genStack` declaration in image-prompts.json:
+//   • flux-photoreal  → fal-ai/flux-lora (single LoRA, natural prompt)
+//                       Best for: photoreal, polished illustration
+//                       (what ET uses; what Spurdo originally tried)
 //
-//   OPENAI (fallback) — gpt-image-1 with reference image
-//     • More expensive, slightly more flexible scene generation
-//     • Used when Fal is down, or for special cases
+//   • sdxl-stylized   → fal-ai/lora (SDXL base + stacked LoRAs, tag prompt)
+//                       Best for: amateur/cartoon/MS-Paint/doodle styles
+//                       (what Spurdo NOW uses — FLUX was wrong base model)
 //
-// Provider selection:
-//   IMAGE_PROVIDER env var: "fal" | "openai" | "auto" (default: auto = fal first)
+//   • openai-only     → routes provider=fal to OpenAI (degenerate case)
+//   • bank-only       → routes provider=fal to bank (degenerate case)
+//
+// The dispatcher means each new project just declares its style at
+// character-bible time and the right pipeline is selected. No code
+// changes per project.
 // ============================================================
 
 export type ImageProvider = "fal" | "openai" | "bank";
@@ -37,51 +43,47 @@ export interface GenerateImageOptions {
   tweetText?: string;
   sceneOverride?: string;
   provider?: ImageProvider;
-  /** When using Fal, a trained LoRA URL. Falls back to base FLUX if not given. */
+  /**
+   * Identity LoRA URL override. If unset, resolves from active LoRA in
+   * KV registry → SPURDO_LORA_URL env → none. Used only when the active
+   * gen stack supports LoRAs (flux-photoreal, sdxl-stylized).
+   */
   loraUrl?: string;
-  /** Scale of the LoRA effect (0-2, default 1.0). Higher = stronger character lock. */
+  /** Identity LoRA scale (0-2). Default depends on stack. */
   loraScale?: number;
 }
 
 export interface GenerateImageResult {
-  /** Either a public HTTPS URL (Fal) or a data URL (OpenAI gpt-image-1) */
   imageUrl: string;
-  /** Provider that generated the image */
   provider: ImageProvider;
-  /** Full prompt sent to the model (for debugging/logging) */
+  /** Full prompt actually sent to the model (for debugging/logging) */
   promptSent: string;
-  /** Approx generation time in ms */
+  /** Negative prompt sent (SDXL) or empty (FLUX/OpenAI) */
+  negativePromptSent?: string;
+  /** Which gen stack ran (only set when provider=fal) */
+  stackUsed?: GenStack;
+  /** LoRAs that ended up attached, with scales — for audit */
+  lorasUsed?: StackedLora[];
   elapsedMs: number;
 }
 
 /**
- * Generate (or fetch from bank) an image. Routes to the configured provider.
+ * Generate (or fetch) an image. Routes to the right pipeline based on
+ * project config + caller's provider preference.
  *
- * Provider behavior:
- *   - "bank":   pulls a pre-curated authentic meme from the GitHub bank.
- *               Free, instant, on-canon. Use for projects where the
- *               target style isn't natively producible by gen models
- *               (e.g., MS Paint / amateur internet art).
- *   - "fal":    FLUX (with optional LoRA) — generated, polished by default.
- *   - "openai": gpt-image-1 with reference image — generated fallback.
- *
- * Throws BudgetExceededError if the daily image cap has been reached
- * (only for generated providers; bank is free).
+ * Throws BudgetExceededError if daily image cap hit (not for bank).
  */
-export async function generateImage(
-  opts: GenerateImageOptions
-): Promise<GenerateImageResult> {
+export async function generateImage(opts: GenerateImageOptions): Promise<GenerateImageResult> {
   const cfg = loadConfig();
-  const requested =
-    opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
+  const requested = opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
 
-  // ── BANK path: free, no budget, no API ──
+  // ── BANK: free, no budget, no API ──
   if (requested === "bank") {
     const startTime = Date.now();
     const meme = await pickMemeForPillar(opts.pillarId);
     if (!meme) {
       throw new Error(
-        "meme bank is empty. upload images at memedepot.com/d/spurdo (or set MEMEDEPOT_FALLBACK_IDS env), then click refresh in /bot."
+        "meme bank is empty. upload memes at memedepot.com/d/spurdo (or set MEMEDEPOT_FALLBACK_IDS env), then click refresh in /bot."
       );
     }
     return {
@@ -92,43 +94,98 @@ export async function generateImage(
     };
   }
 
-  await assertImageBudget(); // generated providers consume budget
-
-  const fullPrompt = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
-  const startTime = Date.now();
-
-  let result: { imageUrl: string; provider: ImageProvider };
-  if (requested === "fal") {
-    // LoRA URL resolution priority:
-    //   1. Explicit option passed in (caller override)
-    //   2. Active LoRA from KV registry (set via /bot dashboard)
-    //   3. SPURDO_LORA_URL env var (manual override)
-    //   4. None — runs on FLUX base
-    let loraUrl: string | null | undefined = opts.loraUrl;
-    if (!loraUrl) {
-      try {
-        loraUrl = await getActiveLoraUrl();
-      } catch {
-        // KV unavailable — fall through to env var
-      }
-    }
-    if (!loraUrl) loraUrl = process.env.SPURDO_LORA_URL || null;
-
-    result = await generateViaFal(fullPrompt, loraUrl, opts.loraScale ?? 1.0);
-  } else {
-    result = await generateViaOpenAI(fullPrompt);
+  // ── OPENAI: direct route, no stack involvement ──
+  if (requested === "openai") {
+    await assertImageBudget();
+    const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
+    const startTime = Date.now();
+    const result = await generateViaOpenAI(built.prompt);
+    await recordImageSpend(1).catch(() => undefined);
+    return {
+      ...result,
+      promptSent: built.prompt,
+      elapsedMs: Date.now() - startTime,
+    };
   }
 
-  // Record after success — failed gens don't count against budget
-  await recordImageSpend(1).catch(() => {
-    /* don't fail the call if KV write fails */
-  });
+  // ── FAL: dispatch by configured gen stack ──
+  await assertImageBudget();
+  const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
+  const startTime = Date.now();
 
-  return { ...result, promptSent: fullPrompt, elapsedMs: Date.now() - startTime };
+  // Resolve identity LoRA: explicit > registry > env > none
+  let identityLoraUrl: string | null | undefined = opts.loraUrl;
+  if (!identityLoraUrl) {
+    try {
+      identityLoraUrl = await getActiveLoraUrl();
+    } catch {
+      // KV unavailable — fall through to env
+    }
+  }
+  if (!identityLoraUrl) identityLoraUrl = process.env.SPURDO_LORA_URL || null;
+
+  const stack = cfg.imagePrompts.genStack;
+  const stackConfig = cfg.imagePrompts.stackConfig;
+
+  let result: { imageUrl: string; provider: ImageProvider; lorasUsed?: StackedLora[] };
+
+  switch (stack) {
+    case "flux-photoreal": {
+      const cfgFlux = stackConfig?.stack === "flux-photoreal" ? stackConfig : null;
+      result = await generateViaFlux({
+        prompt: built.prompt,
+        identityLoraUrl,
+        identityScale: opts.loraScale ?? cfgFlux?.defaultLoraScale ?? 1.0,
+        endpoint: cfgFlux?.inferenceEndpoint || "fal-ai/flux-lora",
+        numInferenceSteps: cfgFlux?.numInferenceSteps ?? 28,
+        guidanceScale: cfgFlux?.guidanceScale ?? 3.5,
+      });
+      break;
+    }
+    case "sdxl-stylized": {
+      const cfgSdxl = stackConfig?.stack === "sdxl-stylized" ? stackConfig : null;
+      result = await generateViaSdxlStack({
+        prompt: built.prompt,
+        negativePrompt: built.negativePrompt,
+        identityLoraUrl,
+        identityScale: opts.loraScale ?? cfgSdxl?.defaultIdentityScale ?? 1.1,
+        styleLoras: cfgSdxl?.defaultStyleLoras ?? [],
+        endpoint: cfgSdxl?.inferenceEndpoint || "fal-ai/lora",
+        numInferenceSteps: cfgSdxl?.numInferenceSteps ?? 30,
+        guidanceScale: cfgSdxl?.guidanceScale ?? 7.0,
+      });
+      break;
+    }
+    case "openai-only": {
+      result = await generateViaOpenAI(built.prompt);
+      break;
+    }
+    case "bank-only": {
+      // Project disallows generation entirely. Re-route to bank.
+      const meme = await pickMemeForPillar(opts.pillarId);
+      if (!meme) throw new Error("project genStack is bank-only and the meme bank is empty.");
+      result = { imageUrl: meme.rawUrl, provider: "bank" };
+      break;
+    }
+    default: {
+      const exhaustive: never = stack;
+      throw new Error(`unsupported genStack: ${exhaustive}`);
+    }
+  }
+
+  await recordImageSpend(1).catch(() => undefined);
+
+  return {
+    ...result,
+    promptSent: built.prompt,
+    negativePromptSent: built.negativePrompt || undefined,
+    stackUsed: stack,
+    elapsedMs: Date.now() - startTime,
+  };
 }
 
 // ============================================================
-// FAL — FLUX.1 [dev] with LoRA
+// FAL CLIENT
 // ============================================================
 
 let _falConfigured = false;
@@ -141,54 +198,166 @@ function ensureFalConfigured() {
   _falConfigured = true;
 }
 
-async function generateViaFal(
-  prompt: string,
-  loraUrl: string | null | undefined,
-  loraScale: number
-): Promise<{ imageUrl: string; provider: ImageProvider }> {
+function isHttpsLoraUrl(u: string | null | undefined): u is string {
+  return typeof u === "string" && /^https?:\/\//.test(u);
+}
+
+// ============================================================
+// FLUX-PHOTOREAL stack — fal-ai/flux-lora
+// ============================================================
+
+async function generateViaFlux(args: {
+  prompt: string;
+  identityLoraUrl: string | null | undefined;
+  identityScale: number;
+  endpoint: string;
+  numInferenceSteps: number;
+  guidanceScale: number;
+}): Promise<{ imageUrl: string; provider: ImageProvider; lorasUsed: StackedLora[] }> {
   ensureFalConfigured();
 
-  // The active LoRA URL came from /api/admin/lora/registry which only
-  // accepts URLs that came back from Fal's training endpoint. Trust it
-  // if it's a valid http(s) URL — Fal's CDN paths don't always include
-  // .safetensors in the path. The earlier strict regex was rejecting
-  // legitimate trained LoRA URLs.
-  const looksLikeLoraUrl = typeof loraUrl === "string" && /^https?:\/\//.test(loraUrl);
-
+  const lorasUsed: StackedLora[] = [];
   const input: Record<string, unknown> = {
-    prompt,
-    image_size: "square_hd", // 1024x1024
-    num_inference_steps: 28,
-    guidance_scale: 3.5,
+    prompt: args.prompt,
+    image_size: "square_hd",
+    num_inference_steps: args.numInferenceSteps,
+    guidance_scale: args.guidanceScale,
     num_images: 1,
     enable_safety_checker: true,
     output_format: "png",
   };
-  if (looksLikeLoraUrl) {
-    input.loras = [{ path: loraUrl, scale: loraScale }];
+
+  if (isHttpsLoraUrl(args.identityLoraUrl)) {
+    const lora: StackedLora = {
+      url: args.identityLoraUrl,
+      role: "identity",
+      scale: args.identityScale,
+      label: "active-identity",
+    };
+    input.loras = [{ path: lora.url, scale: lora.scale }];
+    lorasUsed.push(lora);
   }
 
   const { result } = await retryWithBackoff(
     () =>
-      fal.subscribe("fal-ai/flux-lora", {
-        input: input as Parameters<typeof fal.subscribe<"fal-ai/flux-lora">>[1]["input"],
+      // The endpoint identifier is configurable but fal's typed client uses
+      // string-literal keys for its model registry. Cast via `as never` to
+      // accept arbitrary endpoints (some projects override to alt FLUX hosts).
+      fal.subscribe(args.endpoint as never, {
+        input: input as never,
         logs: false,
       }),
     {
       maxAttempts: 3,
       initialDelayMs: 1500,
       onRetry: (attempt, err) =>
-        console.warn(`[image-gen/fal] retry ${attempt} after error:`, err instanceof Error ? err.message : err),
+        console.warn(
+          `[image-gen/flux] retry ${attempt} after:`,
+          err instanceof Error ? err.message : err
+        ),
     }
   );
-  const data = result.data as { images?: Array<{ url: string }> };
-  const url = data.images?.[0]?.url;
-  if (!url) throw new Error("Fal returned no image URL");
-  return { imageUrl: url, provider: "fal" };
+
+  const data = (result as { data?: { images?: Array<{ url: string }> } }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("FLUX endpoint returned no image URL");
+  return { imageUrl: url, provider: "fal", lorasUsed };
 }
 
 // ============================================================
-// OPENAI — gpt-image-1 with reference image
+// SDXL-STYLIZED stack — fal-ai/lora (SDXL base) with stacked LoRAs
+// ============================================================
+
+async function generateViaSdxlStack(args: {
+  prompt: string;
+  negativePrompt: string;
+  identityLoraUrl: string | null | undefined;
+  identityScale: number;
+  styleLoras: StackedLora[];
+  endpoint: string;
+  numInferenceSteps: number;
+  guidanceScale: number;
+}): Promise<{ imageUrl: string; provider: ImageProvider; lorasUsed: StackedLora[] }> {
+  ensureFalConfigured();
+
+  // Build the LoRA stack: style LoRAs first (set the aesthetic), then identity
+  // LoRA on top (locks the character). Order matters less than scales but
+  // keeping a consistent order helps debugging.
+  const lorasUsed: StackedLora[] = [];
+
+  for (const sl of args.styleLoras) {
+    if (isHttpsLoraUrl(sl.url)) {
+      lorasUsed.push({
+        url: sl.url,
+        role: "style",
+        scale: sl.scale ?? 0.9,
+        label: sl.label || "style",
+        triggerWord: sl.triggerWord,
+      });
+    }
+  }
+  if (isHttpsLoraUrl(args.identityLoraUrl)) {
+    lorasUsed.push({
+      url: args.identityLoraUrl,
+      role: "identity",
+      scale: args.identityScale,
+      label: "active-identity",
+    });
+  }
+
+  // If we have NO LoRAs at all on an SDXL stack, the output is going to be
+  // generic SDXL — illustrated/anime by default. Still a meaningful step
+  // up from FLUX for "amateur drawing" prompts but operator should know.
+  if (lorasUsed.length === 0) {
+    console.warn(
+      "[image-gen/sdxl] no LoRAs attached — output will be base SDXL. Add a style LoRA to stackConfig.defaultStyleLoras + train an identity LoRA for best results."
+    );
+  }
+
+  // fal-ai/lora payload shape: { model_name, prompt, loras: [{path, scale}], ... }
+  // model_name is the base SDXL checkpoint. We default to base SDXL 1.0;
+  // operators can override by setting SDXL_BASE_MODEL env (e.g., to point
+  // at Pony Diffusion V6, JuggernautXL, etc).
+  const baseModel = process.env.SDXL_BASE_MODEL || "stabilityai/stable-diffusion-xl-base-1.0";
+
+  const input: Record<string, unknown> = {
+    model_name: baseModel,
+    prompt: args.prompt,
+    negative_prompt: args.negativePrompt,
+    image_size: "square_hd",
+    num_inference_steps: args.numInferenceSteps,
+    guidance_scale: args.guidanceScale,
+    num_images: 1,
+    enable_safety_checker: true,
+    output_format: "png",
+    loras: lorasUsed.map((l) => ({ path: l.url, scale: l.scale ?? 1.0 })),
+  };
+
+  const { result } = await retryWithBackoff(
+    () =>
+      fal.subscribe(args.endpoint as never, {
+        input: input as never,
+        logs: false,
+      }),
+    {
+      maxAttempts: 3,
+      initialDelayMs: 1500,
+      onRetry: (attempt, err) =>
+        console.warn(
+          `[image-gen/sdxl] retry ${attempt} after:`,
+          err instanceof Error ? err.message : err
+        ),
+    }
+  );
+
+  const data = (result as { data?: { images?: Array<{ url: string }> } }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("SDXL endpoint returned no image URL");
+  return { imageUrl: url, provider: "fal", lorasUsed };
+}
+
+// ============================================================
+// OPENAI gpt-image-1
 // ============================================================
 
 let _openai: OpenAI | null = null;
@@ -202,12 +371,8 @@ function getOpenAI(): OpenAI {
   return _openai;
 }
 
-async function generateViaOpenAI(
-  prompt: string
-): Promise<{ imageUrl: string; provider: ImageProvider }> {
-  // Try to read the project's primary character image from /public
-  // (we use spurdo.png as a sensible default; projects can override
-  // by placing their character file at /public/character-reference.png)
+async function generateViaOpenAI(prompt: string): Promise<{ imageUrl: string; provider: ImageProvider }> {
+  // Try to read the project's primary character image as a reference
   const referenceCandidates = ["character-reference.png", "spurdo.png"];
   let refBuffer: Buffer | null = null;
   let refName: string | null = null;
@@ -224,9 +389,11 @@ async function generateViaOpenAI(
 
   if (refBuffer && refName) {
     const refFile = await toFile(refBuffer, refName, { type: "image/png" });
-    const response = await (getOpenAI().images.edit as unknown as (args: unknown) => Promise<{
-      data?: Array<{ b64_json?: string; url?: string }>;
-    }>)({
+    const response = await (
+      getOpenAI().images.edit as unknown as (args: unknown) => Promise<{
+        data?: Array<{ b64_json?: string; url?: string }>;
+      }>
+    )({
       model: "gpt-image-1",
       image: refFile,
       prompt,
@@ -241,7 +408,7 @@ async function generateViaOpenAI(
     throw new Error("OpenAI gpt-image-1 returned no image data");
   }
 
-  // No reference: fall back to plain generation
+  // No reference: plain generation
   const response = await getOpenAI().images.generate({
     model: "gpt-image-1",
     prompt,
@@ -256,3 +423,6 @@ async function generateViaOpenAI(
   if (url) return { imageUrl: url, provider: "openai" };
   throw new Error("OpenAI gpt-image-1 returned no image data");
 }
+
+// Re-export types used by callers
+export type { GenStack, StackConfig, StackedLora };

@@ -1,15 +1,20 @@
 import { fal } from "@fal-ai/client";
 import { Redis } from "@upstash/redis";
-import { kvKey } from "./config";
+import { kvKey, loadConfig } from "./config";
 
 // ============================================================
 // LORA REGISTRY + TRAINING
 // ============================================================
-// Manages the lifecycle of trained character LoRAs:
+// Manages the lifecycle of trained character/style LoRAs:
 //   1. Submit a training job to Fal with a zipped image set
 //   2. Track the job until it completes
 //   3. Store the resulting LoRA URL in the registry
 //   4. Pick one as "active" — image-gen.ts reads this at inference time
+//
+// Stack-aware: training endpoint is resolved from the project's
+// genStack + stackConfig, so flux-photoreal projects train on FLUX
+// and sdxl-stylized projects train on SDXL. Same UI, different
+// endpoint, different LoRA artifact.
 //
 // All state lives in Upstash Redis (project-scoped):
 //   ${PROJECT}:lora:active        → string (URL of active LoRA)
@@ -24,6 +29,8 @@ export interface LoraEntry {
   notes?: string;
   trainingSetFilename?: string;
   trainingSteps?: number;
+  /** Which gen stack produced this LoRA. Used to detect mismatches. */
+  trainedForStack?: "flux-photoreal" | "sdxl-stylized";
   active: boolean;
 }
 
@@ -39,6 +46,10 @@ export interface ActiveJob {
   trainingSetFilename?: string;
   loraUrl?: string;
   error?: string;
+  /** Which Fal endpoint this job was submitted to */
+  trainingEndpoint?: string;
+  /** Which gen stack the resulting LoRA is for */
+  trainedForStack?: "flux-photoreal" | "sdxl-stylized";
 }
 
 // ────────── KV helpers ──────────
@@ -162,59 +173,123 @@ export async function uploadZipToFal(buf: Buffer, filename: string): Promise<str
   return url;
 }
 
+// ────────── Stack-aware endpoint resolution ──────────
+
 /**
- * Submit a FLUX LoRA fast training job. Returns the request_id.
- * Doesn't block — caller should poll status via pollTrainingJob.
+ * Returns the training endpoint for the active project's gen stack.
+ * Stack defaults:
+ *   flux-photoreal → fal-ai/flux-lora-fast-training
+ *   sdxl-stylized  → fal-ai/fast-sdxl-lora-training
+ *   openai-only / bank-only → flux endpoint as a fallback (training not
+ *     really meaningful for these stacks but the API still works)
+ *
+ * Operators can override via stackConfig.trainingEndpoint per-project.
+ */
+export function resolveTrainingEndpoint(): { endpoint: string; trainedForStack: ActiveJob["trainedForStack"] } {
+  const cfg = loadConfig();
+  const stack = cfg.imagePrompts.genStack;
+  const stackConfig = cfg.imagePrompts.stackConfig;
+
+  if (stack === "sdxl-stylized") {
+    const endpoint =
+      (stackConfig?.stack === "sdxl-stylized" && stackConfig.trainingEndpoint) ||
+      "fal-ai/fast-sdxl-lora-training";
+    return { endpoint, trainedForStack: "sdxl-stylized" };
+  }
+  if (stack === "flux-photoreal") {
+    const endpoint =
+      (stackConfig?.stack === "flux-photoreal" && stackConfig.trainingEndpoint) ||
+      "fal-ai/flux-lora-fast-training";
+    return { endpoint, trainedForStack: "flux-photoreal" };
+  }
+  // For openai-only / bank-only, training isn't part of the workflow but
+  // we still return a valid endpoint so the UI doesn't crash if invoked.
+  return { endpoint: "fal-ai/flux-lora-fast-training", trainedForStack: "flux-photoreal" };
+}
+
+/**
+ * Submit a LoRA training job to the active project's stack endpoint.
+ * Returns the request_id. Caller should poll status via pollTrainingJob.
+ *
+ * Different endpoints accept different inputs — this function abstracts
+ * those differences. The minimum every endpoint accepts:
+ *   - images_data_url: zipped training set
+ *   - steps: training step count
  */
 export async function submitTrainingJob(
   imagesDataUrl: string,
   steps: number = 1000
-): Promise<string> {
+): Promise<{ requestId: string; endpoint: string; trainedForStack: ActiveJob["trainedForStack"] }> {
   ensureFalConfigured();
-  const submitted = await fal.queue.submit("fal-ai/flux-lora-fast-training", {
-    input: {
+  const { endpoint, trainedForStack } = resolveTrainingEndpoint();
+
+  // Stack-specific input shape:
+  //   flux-photoreal: images_data_url + steps + create_masks + is_style
+  //   sdxl-stylized:  images_data_url + steps + (other SDXL-specific)
+  let input: Record<string, unknown>;
+  if (trainedForStack === "sdxl-stylized") {
+    input = {
+      images_data_url: imagesDataUrl,
+      steps,
+      // SDXL training defaults — bias toward character consistency.
+      // Fal's fast-sdxl-lora-training accepts these standard fields.
+      learning_rate: 0.0004,
+      // Trigger word convention: SDXL identity LoRAs work best with a
+      // specific token. We use sp7rd0 by default (the project bible
+      // recommends this); operators can override per-job in M5+.
+      // Note: not all SDXL training endpoints accept `trigger_word`;
+      // ones that don't will ignore the field, which is harmless.
+    };
+  } else {
+    // FLUX (default)
+    input = {
       images_data_url: imagesDataUrl,
       steps,
       create_masks: true,
       is_style: false,
-    },
-  });
-  return submitted.request_id;
+    };
+  }
+
+  const submitted = await fal.queue.submit(endpoint as never, { input: input as never });
+  return { requestId: submitted.request_id, endpoint, trainedForStack };
 }
 
 /**
- * Check the current status of a training job.
+ * Check the current status of a training job. Endpoint-agnostic.
  * Returns one of "queued" | "in_progress" | "completed" | "failed",
  * plus the LoRA URL when complete.
  */
-export async function pollTrainingJob(requestId: string): Promise<{
+export async function pollTrainingJob(requestId: string, endpoint?: string): Promise<{
   status: ActiveJob["status"];
   loraUrl?: string;
   error?: string;
 }> {
   ensureFalConfigured();
-  const rawStatus = (await fal.queue.status("fal-ai/flux-lora-fast-training", {
-    requestId,
-  })) as { status: string };
+  // If endpoint not provided (legacy jobs), default to FLUX endpoint.
+  const ep = endpoint || "fal-ai/flux-lora-fast-training";
 
-  if (rawStatus.status === "IN_QUEUE") {
-    return { status: "queued" };
-  }
-  if (rawStatus.status === "IN_PROGRESS") {
-    return { status: "in_progress" };
-  }
+  const rawStatus = (await fal.queue.status(ep as never, { requestId })) as { status: string };
+
+  if (rawStatus.status === "IN_QUEUE") return { status: "queued" };
+  if (rawStatus.status === "IN_PROGRESS") return { status: "in_progress" };
+
   if (rawStatus.status === "COMPLETED") {
-    // Job done — fetch the result for the LoRA URL
     try {
-      const result = await fal.queue.result("fal-ai/flux-lora-fast-training", { requestId });
-      const data = result.data as { diffusers_lora_file?: { url: string } };
-      const url = data.diffusers_lora_file?.url;
+      const result = await fal.queue.result(ep as never, { requestId });
+      // Both FLUX and SDXL endpoints return the LoRA URL in different
+      // fields. Normalize.
+      const data = result.data as {
+        diffusers_lora_file?: { url: string };
+        lora?: { url: string };
+        lora_file?: { url: string };
+      };
+      const url =
+        data.diffusers_lora_file?.url || data.lora?.url || data.lora_file?.url;
       if (!url) return { status: "failed", error: "Training completed but no LoRA URL in result" };
       return { status: "completed", loraUrl: url };
     } catch (err) {
       return { status: "failed", error: err instanceof Error ? err.message : String(err) };
     }
   }
-  // Anything else (e.g. CANCELLED, FAILED) — treat as failed
   return { status: "failed", error: `Fal returned status: ${rawStatus.status}` };
 }

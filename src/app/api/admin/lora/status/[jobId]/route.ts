@@ -36,10 +36,10 @@ export async function GET(
     return NextResponse.json({ ok: true, job });
   }
 
-  // Poll Fal
+  // Poll Fal — pass the original training endpoint so we use the right poll URL
   let polled: Awaited<ReturnType<typeof pollTrainingJob>>;
   try {
-    polled = await pollTrainingJob(job.requestId);
+    polled = await pollTrainingJob(job.requestId, job.trainingEndpoint);
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: `Fal poll failed: ${err instanceof Error ? err.message : err}` },
@@ -62,6 +62,7 @@ export async function GET(
         notes: job.notes,
         trainingSetFilename: job.trainingSetFilename,
         trainingSteps: job.trainingSteps,
+        trainedForStack: job.trainedForStack,
       });
     } catch {
       // Registry write failed — job is still successful, just not in registry

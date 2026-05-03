@@ -27,6 +27,14 @@ interface StatusData {
     pillarsCount: number;
     contractAddress: string;
     allowedImageProviders?: Array<"bank" | "fal" | "openai">;
+    genStack?: "flux-photoreal" | "sdxl-stylized" | "openai-only" | "bank-only";
+    stackInfo?: {
+      stack: string;
+      styleLoraCount?: number;
+      hasStyleLora?: boolean;
+      defaultIdentityScale?: number;
+      defaultLoraScale?: number;
+    };
   };
   kvHealth: boolean;
   activeLora?: { url: string } | null;
@@ -361,8 +369,37 @@ export default function BotDashboard() {
               <Stat label="kill switch" value={status.killSwitch ? "ACTIVE — paused" : "off — running"} good={!status.killSwitch} />
               <Stat label="kv health" value={status.kvHealth ? "ok" : "FAIL"} good={status.kvHealth} />
               <Stat label="pillars loaded" value={String(status.config.pillarsCount)} good={status.config.pillarsCount > 0} />
-              <Stat label="active lora" value={status.activeLora ? "set" : "base flux"} good={!!status.activeLora} small={false} />
+              <Stat
+                label="gen stack"
+                value={status.config.genStack || "?"}
+                good={status.config.genStack !== "bank-only"}
+                small
+              />
+              <Stat label="active lora" value={status.activeLora ? "set" : "none"} good={!!status.activeLora} small={false} />
               <Stat label="ca" value={status.config.contractAddress} small />
+            </div>
+          )}
+          {status?.config.stackInfo?.stack === "sdxl-stylized" && (
+            <div style={S.budgetBox}>
+              <div style={S.envBoxTitle}>sdxl-stylized stack details</div>
+              <div style={{ fontSize: 12, color: "#5a3820", lineHeight: 1.6 }}>
+                identity scale default: <strong>{status.config.stackInfo.defaultIdentityScale}</strong>
+                {" · "}
+                style LoRAs configured: <strong>{status.config.stackInfo.styleLoraCount}</strong>
+                {" · "}
+                {status.config.stackInfo.hasStyleLora ? (
+                  <span style={{ color: "#0a8c3a" }}>style LoRA active ✓</span>
+                ) : (
+                  <span style={{ color: "#a06800" }}>no style LoRA — output will be base SDXL</span>
+                )}
+              </div>
+              {!status.config.stackInfo.hasStyleLora && (
+                <div style={S.hint}>
+                  to fully activate this stack: source an MS-Paint style LoRA and add it to{" "}
+                  <code>config/{status.config.project}/image-prompts.json → stackConfig.defaultStyleLoras</code>.
+                  bank stays as the on-canon source either way.
+                </div>
+              )}
             </div>
           )}
           {status?.budget && (

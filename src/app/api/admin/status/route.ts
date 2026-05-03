@@ -54,6 +54,26 @@ export async function GET(request: Request) {
         pillarsCount: Object.keys(cfg.pillars.pillars).length,
         contractAddress: cfg.token.contractAddress,
         allowedImageProviders: cfg.imagePrompts.allowedProviders ?? ["bank", "fal", "openai"],
+        genStack: cfg.imagePrompts.genStack,
+        // Surface stack-specific metadata that's useful in the UI
+        stackInfo: (() => {
+          const sc = cfg.imagePrompts.stackConfig;
+          if (sc?.stack === "sdxl-stylized") {
+            return {
+              stack: "sdxl-stylized" as const,
+              styleLoraCount: (sc.defaultStyleLoras ?? []).length,
+              hasStyleLora: (sc.defaultStyleLoras ?? []).some((l) => /^https?:\/\//.test(l.url)),
+              defaultIdentityScale: sc.defaultIdentityScale ?? 1.1,
+            };
+          }
+          if (sc?.stack === "flux-photoreal") {
+            return {
+              stack: "flux-photoreal" as const,
+              defaultLoraScale: sc.defaultLoraScale ?? 1.0,
+            };
+          }
+          return { stack: cfg.imagePrompts.genStack };
+        })(),
       },
       envCheck,
     });
