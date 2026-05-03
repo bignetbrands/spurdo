@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { LoraPanel } from "@/components/LoraPanel";
 import { BankPanel } from "@/components/BankPanel";
+import { StyleLoraPanel } from "@/components/StyleLoraPanel";
 
 // ============================================================
 // SPURDO BOT — Mission Control Dashboard
@@ -59,7 +60,7 @@ interface PillarSummary {
 interface GenerateResponse {
   ok: boolean;
   tweet?: { text: string; pillar: string; model: string; tokensUsed: number; charCount: number };
-  image?: { url: string; provider: string; promptSent: string; elapsedMs: number };
+  image?: { url: string; provider: string; promptSent?: string; elapsedMs: number };
   imageError?: string;
   totalElapsedMs?: number;
   error?: string;
@@ -104,8 +105,16 @@ export default function BotDashboard() {
   // Compose state
   const [selectedPillar, setSelectedPillar] = useState<string>("");
   const [includeImage, setIncludeImage] = useState(true);
-  const [imageProvider, setImageProvider] = useState<"fal" | "openai" | "bank">("bank");
+  const [imageProvider, setImageProvider] = useState<"fal" | "openai" | "bank" | "custom">("bank");
   const [loraScale, setLoraScale] = useState(1.0);
+  // ── CUSTOM IMAGE UPLOAD ──
+  // When provider === "custom", operator picks an image file. We hold the
+  // File in state + compute a preview URL via createObjectURL. On post-now,
+  // we convert to base64 data URL and send via the existing imageUrl field
+  // (lib/twitter.ts already handles data URLs).
+  const [customImageFile, setCustomImageFile] = useState<File | null>(null);
+  const [customImagePreview, setCustomImagePreview] = useState<string | null>(null);
+  const [customDragActive, setCustomDragActive] = useState(false);
   const [composing, setComposing] = useState(false);
   const [composeResult, setComposeResult] = useState<GenerateResponse | null>(null);
   const [posting, setPosting] = useState(false);
@@ -192,17 +201,33 @@ export default function BotDashboard() {
       addLog("pick a pillar first", "warn");
       return;
     }
+    // Custom provider sanity check: must have a file picked before composing
+    // (otherwise the preview would have no image and post-now would fail)
+    if (includeImage && imageProvider === "custom" && !customImageFile) {
+      addLog("pick an image file first (drop or click the upload box)", "warn");
+      return;
+    }
     setComposing(true);
     setComposeResult(null);
-    addLog(`generating ${selectedPillar}${includeImage ? ` + image (${imageProvider})` : ""}…`, "info");
+    const imageLabel = includeImage
+      ? imageProvider === "custom"
+        ? ` + custom image (${customImageFile?.name})`
+        : ` + image (${imageProvider})`
+      : "";
+    addLog(`generating ${selectedPillar}${imageLabel}…`, "info");
     try {
+      // For custom provider: tell the server to skip image gen entirely.
+      // The server only returns tweet text; the image comes from the upload
+      // we already have client-side. This saves an API call + skips budget.
+      const serverShouldGenerateImage = includeImage && imageProvider !== "custom";
+
       const res = await authedFetch("/api/admin/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pillar: selectedPillar,
-          generateImage: includeImage,
-          imageProvider: imageProvider,
+          generateImage: serverShouldGenerateImage,
+          imageProvider: imageProvider === "custom" ? undefined : imageProvider,
           loraScale: imageProvider === "fal" ? loraScale : undefined,
         }),
       });
@@ -217,6 +242,15 @@ export default function BotDashboard() {
         addLog(`likely cause: function timeout (>120s) or Vercel gateway error`, "warn");
         return;
       }
+      // For custom provider: graft the local image preview onto the response
+      // so the rest of the UI (preview, post-now) treats it like any other image.
+      if (data.ok && imageProvider === "custom" && customImageFile && customImagePreview) {
+        data.image = {
+          url: customImagePreview, // blob URL — only used for the local preview <img>
+          provider: "custom",
+          elapsedMs: 0,
+        };
+      }
       setComposeResult(data);
       if (!data.ok) {
         addLog(`generation failed: ${data.error}`, "error");
@@ -230,7 +264,7 @@ export default function BotDashboard() {
     } finally {
       setComposing(false);
     }
-  }, [selectedPillar, includeImage, imageProvider, loraScale, authedFetch, addLog]);
+  }, [selectedPillar, includeImage, imageProvider, loraScale, customImageFile, customImagePreview, authedFetch, addLog]);
 
   // ── M3: Activity + server log fetchers ──
   const fetchActivity = useCallback(async () => {
@@ -261,13 +295,28 @@ export default function BotDashboard() {
     setPosting(true);
     addLog(`posting to X…`, "info");
     try {
+      // For custom-uploaded images: convert the picked File to a base64 data URL.
+      // The server (twitter.ts) handles data URLs natively. Skipped for bank/fal/openai
+      // which already returned a usable URL via /api/admin/generate.
+      let imageUrlForPost: string | undefined = composeResult.image?.url;
+      if (composeResult.image?.provider === "custom" && customImageFile) {
+        try {
+          imageUrlForPost = await fileToDataUrl(customImageFile);
+          const sizeMB = (customImageFile.size / 1024 / 1024).toFixed(2);
+          addLog(`encoding ${customImageFile.name} (${sizeMB} MB) for upload…`, "info");
+        } catch (err) {
+          addLog(`failed to read image file: ${err instanceof Error ? err.message : err}`, "error");
+          return;
+        }
+      }
+
       const res = await authedFetch("/api/admin/post-now", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pillar: composeResult.tweet.pillar,
           text: composeResult.tweet.text,
-          imageUrl: composeResult.image?.url,
+          imageUrl: imageUrlForPost,
           imageProvider: composeResult.image?.provider,
         }),
       });
@@ -281,6 +330,7 @@ export default function BotDashboard() {
         "success"
       );
       setComposeResult(null);
+      setCustomImageFile(null); // clear the upload after successful post
       // Refresh data so the new post appears in ACTIVITY
       fetchActivity();
       fetchServerEvents();
@@ -289,7 +339,7 @@ export default function BotDashboard() {
     } finally {
       setPosting(false);
     }
-  }, [composeResult, status, authedFetch, addLog, fetchActivity, fetchServerEvents]);
+  }, [composeResult, status, customImageFile, authedFetch, addLog, fetchActivity, fetchServerEvents]);
 
   // Auto-poll status + activity + events every 30s when authenticated
   useEffect(() => {
@@ -514,11 +564,11 @@ export default function BotDashboard() {
               <label style={S.label}>
                 provider
                 {(() => {
-                  const allowed = status?.config.allowedImageProviders ?? ["bank", "fal", "openai"];
+                  const allowed = status?.config.allowedImageProviders ?? ["bank", "fal", "openai", "custom"];
                   const current = allowed.includes(imageProvider) ? imageProvider : allowed[0];
                   // If state is out of sync with allowed list, correct it
                   if (current !== imageProvider && allowed.length > 0) {
-                    setTimeout(() => setImageProvider(current as "fal" | "openai" | "bank"), 0);
+                    setTimeout(() => setImageProvider(current as "fal" | "openai" | "bank" | "custom"), 0);
                   }
                   if (allowed.length === 1) {
                     return (
@@ -530,7 +580,7 @@ export default function BotDashboard() {
                   return (
                     <select
                       value={current}
-                      onChange={(e) => setImageProvider(e.target.value as "fal" | "openai" | "bank")}
+                      onChange={(e) => setImageProvider(e.target.value as "fal" | "openai" | "bank" | "custom")}
                       disabled={composing || !includeImage}
                       style={S.selectInline}
                     >
@@ -564,8 +614,79 @@ export default function BotDashboard() {
               </label>
             )}
 
-            <button onClick={compose} disabled={composing || !selectedPillar} style={S.btnPrimary}>
-              {composing ? "🌀 generatin..." : "✨ generate"}
+            {includeImage && imageProvider === "custom" && (
+              <div style={S.customUploadBlock}>
+                <div style={S.envBoxTitle}>upload image</div>
+                <div
+                  style={{ ...S.dropzone, ...(customDragActive ? S.dropzoneActive : {}) }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setCustomDragActive(true);
+                  }}
+                  onDragLeave={() => setCustomDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setCustomDragActive(false);
+                    const dropped = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+                    if (dropped) setCustomImageFile(dropped);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    id="custom-image-input"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setCustomImageFile(f);
+                      e.target.value = ""; // allow re-pick after remove
+                    }}
+                    disabled={composing}
+                  />
+                  <label htmlFor="custom-image-input" style={S.dropzoneLabel}>
+                    {customImagePreview ? (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={customImagePreview} alt="upload preview" style={S.customPreviewImg} />
+                        <div style={S.dropzoneHint}>
+                          {customImageFile?.name} · {((customImageFile?.size || 0) / 1024 / 1024).toFixed(2)} MB · click to replace
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setCustomImageFile(null);
+                          }}
+                          style={S.btnSmall}
+                        >
+                          remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={S.dropzoneText}>
+                        <strong>click to pick</strong> or <strong>drop an image here</strong>
+                        <div style={S.dropzoneHint}>png · jpg · webp · gif · max 5 MB</div>
+                      </div>
+                    )}
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={compose}
+              disabled={
+                composing ||
+                !selectedPillar ||
+                (includeImage && imageProvider === "custom" && !customImageFile)
+              }
+              style={S.btnPrimary}
+            >
+              {composing
+                ? "🌀 generatin..."
+                : includeImage && imageProvider === "custom" && !customImageFile
+                ? "✨ pick an image first"
+                : "✨ generate"}
             </button>
           </div>
 
@@ -612,6 +733,9 @@ export default function BotDashboard() {
 
         {/* BANK — M4 (curated memes from GitHub) */}
         <BankPanel authedFetch={authedFetch} addLog={addLog} />
+
+        {/* STYLE LORAS — M5 (only renders when stack supports them) */}
+        <StyleLoraPanel authedFetch={authedFetch} addLog={addLog} />
 
         {/* LORA — M2.5 */}
         <LoraPanel authedFetch={authedFetch} addLog={addLog} />
@@ -715,10 +839,24 @@ function typeColor(t: LogEntry["type"]): string {
   return t === "error" ? "#c92020" : t === "warn" ? "#a06800" : t === "success" ? "#0a8c3a" : "#444";
 }
 
-function labelForProvider(p: "bank" | "fal" | "openai"): string {
+function labelForProvider(p: "bank" | "fal" | "openai" | "custom"): string {
   if (p === "bank") return "bank (curated memes) — free, on-canon";
+  if (p === "custom") return "custom upload — your image";
   if (p === "fal") return "fal (FLUX + LoRA) — generated";
   return "openai (gpt-image-1) — generated";
+}
+
+/** Convert a File to a base64 data URL for transport to post-now. */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("FileReader returned non-string result"));
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 const S: Record<string, React.CSSProperties> = {
@@ -765,6 +903,22 @@ const S: Record<string, React.CSSProperties> = {
   selectInline: { padding: "6px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "monospace", fontSize: 12, cursor: "pointer", marginLeft: 8 },
   providerLocked: { padding: "6px 10px", border: "2px solid #0a8c3a", background: "#f0f8ea", fontFamily: "monospace", fontSize: 12, marginLeft: 8 },
   providerLockedNote: { color: "#0a8c3a", fontStyle: "italic", marginLeft: 4 },
+  customUploadBlock: { padding: 12, background: "#fffbea", border: "2px solid #1a1a1a" },
+  dropzone: {
+    border: "3px dashed #1a1a1a",
+    background: "#fffbea",
+    padding: 20,
+    textAlign: "center",
+    cursor: "pointer",
+    transition: "background 0.15s, border-color 0.15s",
+    marginTop: 8,
+  },
+  dropzoneActive: { background: "#fff3b0", borderColor: "#a06800", borderStyle: "solid" },
+  dropzoneLabel: { display: "block", cursor: "pointer", width: "100%" },
+  dropzoneText: { fontSize: 14, color: "#1a1a1a" },
+  dropzoneHint: { fontSize: 11, color: "#5a3820", marginTop: 6, fontFamily: "monospace", fontStyle: "italic" },
+  customPreviewImg: { maxWidth: "100%", maxHeight: 280, border: "2px solid #1a1a1a", display: "block" },
+  btnSmall: { padding: "4px 10px", border: "2px solid #1a1a1a", background: "#fff", fontFamily: "inherit", fontSize: 11, cursor: "pointer" },
   pillarBlurb: { fontSize: 13, color: "#5a3820", padding: "8px 12px", background: "#f5e9c9", border: "2px dashed #1a1a1a" },
   composeOpts: { display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" },
   checkboxLabel: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "#5a3820" },

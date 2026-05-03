@@ -4,8 +4,17 @@
     "stack": "sdxl-stylized",
     "inferenceEndpoint": "fal-ai/lora",
     "trainingEndpoint": "fal-ai/fast-sdxl-lora-training",
-    "defaultStyleLoras": [],
-    "defaultStyleLorasComment": "Add an MS-Paint style LoRA URL here once sourced. Civitai has 'Abstract MS Paint Style' (paid). Tensor.art and HuggingFace have free options. Format: { url, role: 'style', scale: 0.9, label: 'ms-paint', triggerWord: 'mspaint' }. Without a style LoRA, generation will produce SDXL's default illustrated/anime aesthetic — better than FLUX cartoon polish but still not authentic MS Paint. The bank stays as the on-canon source; this generation path is a complement, not a replacement.",
+    "defaultStyleLoras": [
+      {
+        "url": "https://huggingface.co/victor/MSpaint/resolve/main/SDXL_MSPaint_Portrait.safetensors",
+        "role": "style",
+        "scale": 0.9,
+        "label": "ms-paint-style",
+        "triggerWord": "MSPaint",
+        "sourceComment": "MS Paint style LoRA for SDXL. Re-upload of civitai.com/models/183354 hosted on HuggingFace for direct programmatic access. Trained on SDXL 1.0 base. Trigger word 'MSPaint' should appear in prompts. 171 MB. Public, no auth required."
+      }
+    ],
+    "defaultStyleLorasComment": "Configured with the public MSpaint SDXL LoRA from huggingface.co/victor/MSpaint. Operators can override at runtime via /bot STYLE LORAS panel (KV-backed) without redeploying.",
     "defaultIdentityScale": 1.1,
     "qualityTags": "score_9, score_8_up, score_7_up, masterpiece, best quality",
     "negativeTags": "score_4, score_3, score_2, score_1, low quality, blurry, photo, photorealistic, 3d render, cgi, smooth shading, professional illustration, vector art, clean lines, anime, watermark, signature, text, logo, multiple characters",

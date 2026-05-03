@@ -8,6 +8,7 @@ import { getActiveLoraUrl } from "./lora";
 import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
 import { pickMemeForPillar } from "./meme-bank";
+import { resolveStyleLoras } from "./style-loras";
 import type { PillarId, GenStack, StackConfig, StackedLora } from "@/types";
 
 // ============================================================
@@ -144,12 +145,14 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
     }
     case "sdxl-stylized": {
       const cfgSdxl = stackConfig?.stack === "sdxl-stylized" ? stackConfig : null;
+      // Style LoRAs: KV runtime override (if set) > config defaults > none
+      const { loras: styleLoras } = await resolveStyleLoras();
       result = await generateViaSdxlStack({
         prompt: built.prompt,
         negativePrompt: built.negativePrompt,
         identityLoraUrl,
         identityScale: opts.loraScale ?? cfgSdxl?.defaultIdentityScale ?? 1.1,
-        styleLoras: cfgSdxl?.defaultStyleLoras ?? [],
+        styleLoras,
         endpoint: cfgSdxl?.inferenceEndpoint || "fal-ai/lora",
         numInferenceSteps: cfgSdxl?.numInferenceSteps ?? 30,
         guidanceScale: cfgSdxl?.guidanceScale ?? 7.0,
@@ -284,6 +287,7 @@ async function generateViaSdxlStack(args: {
   // LoRA on top (locks the character). Order matters less than scales but
   // keeping a consistent order helps debugging.
   const lorasUsed: StackedLora[] = [];
+  const triggerWords: string[] = [];
 
   for (const sl of args.styleLoras) {
     if (isHttpsLoraUrl(sl.url)) {
@@ -294,6 +298,12 @@ async function generateViaSdxlStack(args: {
         label: sl.label || "style",
         triggerWord: sl.triggerWord,
       });
+      // Some LoRAs require a specific trigger token in the prompt. We
+      // prepend any configured trigger words so the operator doesn't have
+      // to remember to add them by hand.
+      if (sl.triggerWord && !args.prompt.toLowerCase().includes(sl.triggerWord.toLowerCase())) {
+        triggerWords.push(sl.triggerWord);
+      }
     }
   }
   if (isHttpsLoraUrl(args.identityLoraUrl)) {
@@ -305,12 +315,16 @@ async function generateViaSdxlStack(args: {
     });
   }
 
+  // Construct final prompt: [trigger words], [original prompt]
+  const finalPrompt =
+    triggerWords.length > 0 ? `${triggerWords.join(", ")}, ${args.prompt}` : args.prompt;
+
   // If we have NO LoRAs at all on an SDXL stack, the output is going to be
   // generic SDXL — illustrated/anime by default. Still a meaningful step
   // up from FLUX for "amateur drawing" prompts but operator should know.
   if (lorasUsed.length === 0) {
     console.warn(
-      "[image-gen/sdxl] no LoRAs attached — output will be base SDXL. Add a style LoRA to stackConfig.defaultStyleLoras + train an identity LoRA for best results."
+      "[image-gen/sdxl] no LoRAs attached — output will be base SDXL. Add a style LoRA via /bot or stackConfig.defaultStyleLoras + train an identity LoRA for best results."
     );
   }
 
@@ -322,7 +336,7 @@ async function generateViaSdxlStack(args: {
 
   const input: Record<string, unknown> = {
     model_name: baseModel,
-    prompt: args.prompt,
+    prompt: finalPrompt,
     negative_prompt: args.negativePrompt,
     image_size: "square_hd",
     num_inference_steps: args.numInferenceSteps,
