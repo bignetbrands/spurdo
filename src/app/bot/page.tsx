@@ -189,7 +189,17 @@ export default function BotDashboard() {
           imageProvider: imageProvider,
         }),
       });
-      const data = (await res.json()) as GenerateResponse;
+      const text = await res.text();
+      let data: GenerateResponse;
+      try {
+        data = JSON.parse(text) as GenerateResponse;
+      } catch {
+        // Vercel returned an HTML error page (timeout, crash, etc) instead of JSON
+        const snippet = text.slice(0, 120).replace(/\s+/g, " ").trim();
+        addLog(`server returned non-JSON (HTTP ${res.status}): "${snippet}…"`, "error");
+        addLog(`likely cause: function timeout (>120s) or Vercel gateway error`, "warn");
+        return;
+      }
       setComposeResult(data);
       if (!data.ok) {
         addLog(`generation failed: ${data.error}`, "error");

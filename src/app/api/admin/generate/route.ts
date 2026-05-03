@@ -8,7 +8,7 @@ import { BudgetExceededError } from "@/lib/budget";
 import type { PillarId } from "@/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // Rate limit: 10 generates per minute, configurable via env
 const GENERATE_PER_MINUTE = parseInt(process.env.GENERATE_RATE_PER_MINUTE || "10", 10);

@@ -119,9 +119,12 @@ async function generateViaFal(
 ): Promise<{ imageUrl: string; provider: ImageProvider }> {
   ensureFalConfigured();
 
-  // Only attach LoRA if it's a real URL (not just the reference image path placeholder)
-  const looksLikeLoraUrl =
-    typeof loraUrl === "string" && /^https?:\/\//.test(loraUrl) && /\.safetensors|\.bin|\/lora\//i.test(loraUrl);
+  // The active LoRA URL came from /api/admin/lora/registry which only
+  // accepts URLs that came back from Fal's training endpoint. Trust it
+  // if it's a valid http(s) URL — Fal's CDN paths don't always include
+  // .safetensors in the path. The earlier strict regex was rejecting
+  // legitimate trained LoRA URLs.
+  const looksLikeLoraUrl = typeof loraUrl === "string" && /^https?:\/\//.test(loraUrl);
 
   const input: Record<string, unknown> = {
     prompt,

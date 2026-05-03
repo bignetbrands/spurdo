@@ -5,7 +5,7 @@ import { decideNext } from "@/lib/scheduler";
 import { executeTweet } from "@/lib/orchestrator";
 import { logEvent } from "@/lib/events";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 /**

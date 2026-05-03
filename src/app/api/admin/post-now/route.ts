@@ -6,7 +6,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import type { PillarId } from "@/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // Tighter rate limit on posting than on generating —
 // you should be deliberate about pushing live tweets.
