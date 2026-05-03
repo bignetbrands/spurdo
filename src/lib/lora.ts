@@ -178,10 +178,12 @@ export async function uploadZipToFal(buf: Buffer, filename: string): Promise<str
 /**
  * Returns the training endpoint for the active project's gen stack.
  * Stack defaults:
- *   flux-photoreal → fal-ai/flux-lora-fast-training
- *   sdxl-stylized  → fal-ai/fast-sdxl-lora-training
- *   openai-only / bank-only → flux endpoint as a fallback (training not
- *     really meaningful for these stacks but the API still works)
+ *   flux-photoreal → fal-ai/flux-lora-fast-training (real, works)
+ *   sdxl-stylized  → THROWS — Fal does not host an SDXL LoRA training
+ *                    endpoint. Operators must train SDXL LoRAs externally
+ *                    (Replicate, civitai trainer, fal-ai/flux-2-trainer if
+ *                    switching to FLUX 2) and add the URL via a BYO flow.
+ *   openai-only / bank-only → flux endpoint as a fallback
  *
  * Operators can override via stackConfig.trainingEndpoint per-project.
  */
@@ -191,10 +193,16 @@ export function resolveTrainingEndpoint(): { endpoint: string; trainedForStack: 
   const stackConfig = cfg.imagePrompts.stackConfig;
 
   if (stack === "sdxl-stylized") {
-    const endpoint =
-      (stackConfig?.stack === "sdxl-stylized" && stackConfig.trainingEndpoint) ||
-      "fal-ai/fast-sdxl-lora-training";
-    return { endpoint, trainedForStack: "sdxl-stylized" };
+    // CHECK: only honor a custom training endpoint if the operator
+    // explicitly set one in config (meaning they know about the limitation
+    // and have an alternate trainer URL). Otherwise refuse to submit.
+    if (stackConfig?.stack === "sdxl-stylized" && stackConfig.trainingEndpoint) {
+      return { endpoint: stackConfig.trainingEndpoint, trainedForStack: "sdxl-stylized" };
+    }
+    throw new Error(
+      "SDXL LoRA training isn't available on Fal. Train SDXL LoRAs externally (Replicate, civitai's trainer, or use fal-ai/flux-2-trainer if switching to FLUX 2) and add the URL via the LoRA registry directly. " +
+      "Or switch this project's genStack to 'flux-photoreal' in config/${PROJECT}/image-prompts.json to train on Fal's FLUX endpoint instead."
+    );
   }
   if (stack === "flux-photoreal") {
     const endpoint =

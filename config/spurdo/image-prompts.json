@@ -1,28 +1,21 @@
 {
-  "genStack": "sdxl-stylized",
+  "genStack": "flux-photoreal",
   "stackConfig": {
+    "stack": "flux-photoreal",
+    "inferenceEndpoint": "fal-ai/flux-lora",
+    "trainingEndpoint": "fal-ai/flux-lora-fast-training",
+    "defaultLoraScale": 1.0,
+    "numInferenceSteps": 28,
+    "guidanceScale": 3.5,
+    "stackChoiceComment": "REVERTED to flux-photoreal because Fal does not have an SDXL LoRA training endpoint (only inference). The earlier sdxl-stylized config pointed at fal-ai/fast-sdxl-lora-training which doesn't exist — training submissions returned 'Not Found'. Bank stays as the on-canon image source for Spurdo regardless. Generation via FLUX produces polished cartoon output (off-canon) but at least training works. To eventually use SDXL stack: source a Spurdo identity LoRA from an external SDXL trainer (Replicate, civitai trainer, etc.) and add the URL via a future BYO-LoRA-URL flow."
+  },
+  "sdxlStackConfigArchived": {
     "stack": "sdxl-stylized",
     "inferenceEndpoint": "fal-ai/lora",
-    "trainingEndpoint": "fal-ai/fast-sdxl-lora-training",
-    "defaultStyleLoras": [
-      {
-        "url": "https://huggingface.co/victor/MSpaint/resolve/main/SDXL_MSPaint_Portrait.safetensors",
-        "role": "style",
-        "scale": 0.9,
-        "label": "ms-paint-style",
-        "triggerWord": "MSPaint",
-        "sourceComment": "MS Paint style LoRA for SDXL. Re-upload of civitai.com/models/183354 hosted on HuggingFace for direct programmatic access. Trained on SDXL 1.0 base. Trigger word 'MSPaint' should appear in prompts. 171 MB. Public, no auth required."
-      }
-    ],
-    "defaultStyleLorasComment": "Configured with the public MSpaint SDXL LoRA from huggingface.co/victor/MSpaint. Operators can override at runtime via /bot STYLE LORAS panel (KV-backed) without redeploying.",
-    "defaultIdentityScale": 1.1,
-    "qualityTags": "score_9, score_8_up, score_7_up, masterpiece, best quality",
-    "negativeTags": "score_4, score_3, score_2, score_1, low quality, blurry, photo, photorealistic, 3d render, cgi, smooth shading, professional illustration, vector art, clean lines, anime, watermark, signature, text, logo, multiple characters",
-    "numInferenceSteps": 30,
-    "guidanceScale": 7.0
+    "comment": "Saved here for when SDXL training story is sorted (external trainers + BYO URL). Inference endpoint fal-ai/lora is a real working Fal endpoint that supports SDXL with stacked LoRAs. The defaultStyleLoras would re-attach: huggingface.co/victor/MSpaint/SDXL_MSPaint_Portrait.safetensors (MSPaint trigger word, scale 0.9). Quality tags: score_9, score_8_up, score_7_up. Negative tags include 'photo, photorealistic, 3d render, smooth shading, anime, vector'. Guidance 7.0, steps 30."
   },
   "allowedProviders": ["bank", "custom", "fal"],
-  "allowedProvidersComment": "Bank stays as the on-canon source — authentic memes always win for MS-Paint canon fidelity. Custom upload lets the operator post any image directly (good for one-offs, screenshots from outside sources, hand-edited memes). Fal now routes through the sdxl-stylized stack — needs an MS-Paint style LoRA + SDXL identity LoRA to produce on-canon results (see docs/style-loras.md).",
+  "allowedProvidersComment": "Bank stays as the on-canon source. Custom upload for one-offs. Fal now routes through flux-photoreal (training works, output is cartoon-polish — fine because bank covers actual posts).",
   "model": "gpt-image-1",
   "size": "1024x1024",
   "quality": "medium",
