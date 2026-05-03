@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { LoraPanel } from "@/components/LoraPanel";
+import { BankPanel } from "@/components/BankPanel";
 
 // ============================================================
 // SPURDO BOT — Mission Control Dashboard
@@ -89,7 +90,7 @@ export default function BotDashboard() {
   // Compose state
   const [selectedPillar, setSelectedPillar] = useState<string>("");
   const [includeImage, setIncludeImage] = useState(true);
-  const [imageProvider, setImageProvider] = useState<"fal" | "openai">("fal");
+  const [imageProvider, setImageProvider] = useState<"fal" | "openai" | "bank">("bank");
   const [loraScale, setLoraScale] = useState(1.0);
   const [composing, setComposing] = useState(false);
   const [composeResult, setComposeResult] = useState<GenerateResponse | null>(null);
@@ -471,12 +472,13 @@ export default function BotDashboard() {
                 provider
                 <select
                   value={imageProvider}
-                  onChange={(e) => setImageProvider(e.target.value as "fal" | "openai")}
+                  onChange={(e) => setImageProvider(e.target.value as "fal" | "openai" | "bank")}
                   disabled={composing || !includeImage}
                   style={S.selectInline}
                 >
-                  <option value="fal">fal (FLUX) — cheap, fast</option>
-                  <option value="openai">openai (gpt-image-1) — fallback</option>
+                  <option value="bank">bank (curated memes) — free, on-canon</option>
+                  <option value="fal">fal (FLUX + LoRA) — generated</option>
+                  <option value="openai">openai (gpt-image-1) — generated fallback</option>
                 </select>
               </label>
             </div>
@@ -545,6 +547,9 @@ export default function BotDashboard() {
             </div>
           )}
         </section>
+
+        {/* BANK — M4 (curated memes from GitHub) */}
+        <BankPanel authedFetch={authedFetch} addLog={addLog} />
 
         {/* LORA — M2.5 */}
         <LoraPanel authedFetch={authedFetch} addLog={addLog} />

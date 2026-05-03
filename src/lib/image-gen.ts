@@ -7,6 +7,7 @@ import { buildImagePrompt } from "./prompts";
 import { getActiveLoraUrl } from "./lora";
 import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
+import { pickMemeForPillar } from "./meme-bank";
 import type { PillarId } from "@/types";
 
 // ============================================================
@@ -29,7 +30,7 @@ import type { PillarId } from "@/types";
 //   IMAGE_PROVIDER env var: "fal" | "openai" | "auto" (default: auto = fal first)
 // ============================================================
 
-export type ImageProvider = "fal" | "openai";
+export type ImageProvider = "fal" | "openai" | "bank";
 
 export interface GenerateImageOptions {
   pillarId: PillarId;
@@ -54,16 +55,44 @@ export interface GenerateImageResult {
 }
 
 /**
- * Generate an image. Routes to the configured provider.
- * Throws BudgetExceededError if the daily image cap has been reached.
+ * Generate (or fetch from bank) an image. Routes to the configured provider.
+ *
+ * Provider behavior:
+ *   - "bank":   pulls a pre-curated authentic meme from the GitHub bank.
+ *               Free, instant, on-canon. Use for projects where the
+ *               target style isn't natively producible by gen models
+ *               (e.g., MS Paint / amateur internet art).
+ *   - "fal":    FLUX (with optional LoRA) — generated, polished by default.
+ *   - "openai": gpt-image-1 with reference image — generated fallback.
+ *
+ * Throws BudgetExceededError if the daily image cap has been reached
+ * (only for generated providers; bank is free).
  */
 export async function generateImage(
   opts: GenerateImageOptions
 ): Promise<GenerateImageResult> {
-  await assertImageBudget(); // will throw if cap reached
-
   const cfg = loadConfig();
-  const requested = opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
+  const requested =
+    opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
+
+  // ── BANK path: free, no budget, no API ──
+  if (requested === "bank") {
+    const startTime = Date.now();
+    const meme = await pickMemeForPillar(opts.pillarId);
+    if (!meme) {
+      throw new Error(
+        "meme bank is empty. push images to the bank repo (see /bot LORA & BANK panel) or switch provider to 'fal'/'openai'."
+      );
+    }
+    return {
+      imageUrl: meme.rawUrl,
+      provider: "bank",
+      promptSent: `[bank] ${meme.filename} · pillar=${opts.pillarId} · tags=[${meme.tags.join(", ")}]`,
+      elapsedMs: Date.now() - startTime,
+    };
+  }
+
+  await assertImageBudget(); // generated providers consume budget
 
   const fullPrompt = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", opts.sceneOverride);
   const startTime = Date.now();
