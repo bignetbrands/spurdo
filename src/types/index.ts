@@ -182,11 +182,12 @@ export interface ImagePromptsConfig {
   stackConfig?: StackConfig;
   /**
    * Image providers shown in the COMPOSE dropdown.
-   *   "bank" — pull from memedepot
-   *   "fal" — invoke the configured genStack (flux or sdxl)
+   *   "bank"   — pull from memedepot
+   *   "custom" — operator uploads an image directly (bypasses generation)
+   *   "fal"    — invoke the configured genStack (flux or sdxl)
    *   "openai" — invoke openai-image directly (legacy fallback)
    */
-  allowedProviders?: Array<"bank" | "fal" | "openai">;
+  allowedProviders?: Array<"bank" | "custom" | "fal" | "openai">;
   allowedProvidersComment?: string;
 
   // === Legacy / OpenAI-specific (still used) ===

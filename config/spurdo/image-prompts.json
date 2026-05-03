@@ -21,8 +21,8 @@
     "numInferenceSteps": 30,
     "guidanceScale": 7.0
   },
-  "allowedProviders": ["bank", "fal"],
-  "allowedProvidersComment": "Bank stays as the on-canon source — authentic memes always win for MS-Paint canon fidelity. Fal now routes through the sdxl-stylized stack (SDXL base + style LoRA + identity LoRA), which is the right tech stack for amateur/cartoon styles. The earlier FLUX failure mode is gone. To activate generation: (1) source an MS-Paint style LoRA, add to stackConfig.defaultStyleLoras; (2) retrain Spurdo identity on SDXL via /bot LORA panel; (3) test against bank quality before promoting.",
+  "allowedProviders": ["bank", "custom", "fal"],
+  "allowedProvidersComment": "Bank stays as the on-canon source — authentic memes always win for MS-Paint canon fidelity. Custom upload lets the operator post any image directly (good for one-offs, screenshots from outside sources, hand-edited memes). Fal now routes through the sdxl-stylized stack — needs an MS-Paint style LoRA + SDXL identity LoRA to produce on-canon results (see docs/style-loras.md).",
   "model": "gpt-image-1",
   "size": "1024x1024",
   "quality": "medium",

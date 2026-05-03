@@ -27,7 +27,7 @@ interface StatusData {
     xHandle: string;
     pillarsCount: number;
     contractAddress: string;
-    allowedImageProviders?: Array<"bank" | "fal" | "openai">;
+    allowedImageProviders?: Array<"bank" | "custom" | "fal" | "openai">;
     genStack?: "flux-photoreal" | "sdxl-stylized" | "openai-only" | "bank-only";
     stackInfo?: {
       stack: string;
@@ -354,6 +354,24 @@ export default function BotDashboard() {
     }, 30_000);
     return () => clearInterval(id);
   }, [authenticated, fetchStatus, fetchPillars, fetchActivity, fetchServerEvents]);
+
+  // Custom image preview: create blob URL when file picked, revoke on change/unmount
+  useEffect(() => {
+    if (!customImageFile) {
+      setCustomImagePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(customImageFile);
+    setCustomImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [customImageFile]);
+
+  // Clear custom image when provider switches away
+  useEffect(() => {
+    if (imageProvider !== "custom" && customImageFile) {
+      setCustomImageFile(null);
+    }
+  }, [imageProvider, customImageFile]);
 
   // ────── AUTH GATE ──────
   if (!authenticated) {

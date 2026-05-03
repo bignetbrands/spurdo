@@ -53,7 +53,7 @@ export async function GET(request: Request) {
         xHandle: cfg.accounts.xHandle,
         pillarsCount: Object.keys(cfg.pillars.pillars).length,
         contractAddress: cfg.token.contractAddress,
-        allowedImageProviders: cfg.imagePrompts.allowedProviders ?? ["bank", "fal", "openai"],
+        allowedImageProviders: cfg.imagePrompts.allowedProviders ?? ["bank", "custom", "fal", "openai"],
         genStack: cfg.imagePrompts.genStack,
         // Surface stack-specific metadata that's useful in the UI
         stackInfo: (() => {
