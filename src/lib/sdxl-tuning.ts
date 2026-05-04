@@ -33,6 +33,13 @@ export interface SdxlTuning {
   setAt: string;
   /** Optional notes from the calibration run (seed, sample prompt, etc) */
   notes?: string;
+  /**
+   * If true, every fal-generated image gets a second img2img refine
+   * pass at strength 0.3 to clean up small physics/anatomy issues
+   * (floating objects, fingers clipping props). Doubles cost.
+   * Default: false (off — operator opts in).
+   */
+  autoRefine?: boolean;
 }
 
 export async function getSdxlTuning(): Promise<SdxlTuning | null> {

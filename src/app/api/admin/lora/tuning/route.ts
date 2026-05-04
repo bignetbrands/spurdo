@@ -27,13 +27,13 @@ export async function POST(request: Request) {
   const unauthorized = checkAdminAuth(request);
   if (unauthorized) return unauthorized;
 
-  let body: { loraScale?: number; guidanceScale?: number; notes?: string };
+  let body: { loraScale?: number; guidanceScale?: number; notes?: string; autoRefine?: boolean };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON" }, { status: 400 });
   }
-  const { loraScale, guidanceScale, notes } = body;
+  const { loraScale, guidanceScale, notes, autoRefine } = body;
   if (typeof loraScale !== "number" || loraScale < 0 || loraScale > 2) {
     return NextResponse.json(
       { ok: false, error: "loraScale must be a number between 0 and 2" },
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     guidanceScale,
     setAt: new Date().toISOString(),
     notes: notes?.trim() || undefined,
+    autoRefine: autoRefine === true,
   };
   await setSdxlTuning(tuning);
   return NextResponse.json({ ok: true, tuning });

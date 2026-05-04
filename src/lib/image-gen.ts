@@ -168,6 +168,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
         opts.loraScale ?? tuning?.loraScale ?? cfgSdxl?.defaultIdentityScale ?? 1.1;
       const effectiveGuidance =
         opts.guidanceScaleOverride ?? tuning?.guidanceScale ?? cfgSdxl?.guidanceScale ?? 7.0;
+      const effectiveSteps = opts.inferenceStepsOverride ?? cfgSdxl?.numInferenceSteps ?? 30;
       result = await generateViaSdxlStack({
         prompt: built.prompt,
         negativePrompt: built.negativePrompt,
@@ -175,10 +176,36 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
         identityScale: effectiveLoraScale,
         styleLoras,
         endpoint: cfgSdxl?.inferenceEndpoint || "fal-ai/lora",
-        numInferenceSteps: opts.inferenceStepsOverride ?? cfgSdxl?.numInferenceSteps ?? 30,
+        numInferenceSteps: effectiveSteps,
         guidanceScale: effectiveGuidance,
         seed: opts.seed,
       });
+
+      // Optional second pass: img2img refine to fix floating objects /
+      // bad hands / physics issues. Only runs when autoRefine is true
+      // (set in tuning). Failure-tolerant — if pass 2 throws, we keep
+      // pass 1.
+      if (tuning?.autoRefine) {
+        try {
+          const refinedUrl = await refineSdxlImage({
+            firstPassImageUrl: result.imageUrl,
+            prompt: built.prompt,
+            negativePrompt: built.negativePrompt,
+            identityLoraUrl,
+            identityScale: effectiveLoraScale,
+            styleLoras,
+            numInferenceSteps: effectiveSteps,
+            guidanceScale: effectiveGuidance,
+          });
+          result = { ...result, imageUrl: refinedUrl };
+          console.log("[image-gen/sdxl] refine pass succeeded");
+        } catch (err) {
+          console.warn(
+            "[image-gen/sdxl] refine pass failed, keeping original:",
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
       break;
     }
     case "openai-only": {
@@ -442,6 +469,91 @@ async function generateViaSdxlStack(args: {
   const url = data?.images?.[0]?.url;
   if (!url) throw new Error("SDXL endpoint returned no image URL");
   return { imageUrl: url, provider: "fal", lorasUsed };
+}
+
+// ============================================================
+// SDXL refine pass — img2img on the first-pass output
+// ============================================================
+//
+// Diffusion models reliably produce small physics/anatomy issues:
+// floating objects near hands, fingers clipping through props, cups
+// detached from saucers. A second img2img pass at low denoise
+// strength (~0.3) often cleans these up while preserving the scene.
+//
+// We hand the first-pass image back to the same fal-ai/lora endpoint
+// in image-to-image mode. Same LoRA stack, same prompt + a corrective
+// suffix focused on physics/anatomy. Strength 0.3 means 70% of the
+// original image is preserved — enough for fixes, not enough to
+// destroy composition.
+//
+// Failure-tolerant: if the refine pass throws, we return the original.
+// ============================================================
+
+const REFINE_PROMPT_SUFFIX =
+  ", correctly placed objects firmly resting on surfaces, hands holding objects properly, accurate anatomy, no floating items, objects touching the surface they sit on";
+
+async function refineSdxlImage(args: {
+  firstPassImageUrl: string;
+  prompt: string;
+  negativePrompt: string;
+  identityLoraUrl: string | null | undefined;
+  identityScale: number;
+  styleLoras: StackedLora[];
+  numInferenceSteps: number;
+  guidanceScale: number;
+}): Promise<string> {
+  ensureFalConfigured();
+
+  const lorasUsed: StackedLora[] = [];
+  const triggerWords: string[] = [];
+  for (const sl of args.styleLoras) {
+    if (isHttpsLoraUrl(sl.url)) {
+      lorasUsed.push({ url: sl.url, role: "style", scale: sl.scale ?? 0.9, label: sl.label || "style", triggerWord: sl.triggerWord });
+      if (sl.triggerWord && !args.prompt.toLowerCase().includes(sl.triggerWord.toLowerCase())) {
+        triggerWords.push(sl.triggerWord);
+      }
+    }
+  }
+  if (isHttpsLoraUrl(args.identityLoraUrl)) {
+    lorasUsed.push({ url: args.identityLoraUrl, role: "identity", scale: args.identityScale, label: "active-identity" });
+  }
+
+  const finalPrompt =
+    (triggerWords.length > 0 ? `${triggerWords.join(", ")}, ` : "") +
+    args.prompt +
+    REFINE_PROMPT_SUFFIX;
+
+  const baseModel = process.env.SDXL_BASE_MODEL || "stabilityai/stable-diffusion-xl-base-1.0";
+
+  const input: Record<string, unknown> = {
+    model_name: baseModel,
+    prompt: finalPrompt,
+    negative_prompt: args.negativePrompt,
+    image_url: args.firstPassImageUrl,
+    strength: 0.3, // 0.0 = preserve, 1.0 = remake; 0.3 = light refinement
+    image_size: "square_hd",
+    num_inference_steps: args.numInferenceSteps,
+    guidance_scale: args.guidanceScale,
+    num_images: 1,
+    enable_safety_checker: true,
+    output_format: "png",
+    loras: lorasUsed.map((l) => ({ path: l.url, scale: l.scale ?? 1.0 })),
+  };
+
+  console.log("[image-gen/sdxl-refine] submit", {
+    firstPassUrl: args.firstPassImageUrl.slice(0, 80),
+    promptPreview: finalPrompt.slice(0, 120),
+  });
+
+  const response = await fal.subscribe("fal-ai/lora/image-to-image" as never, {
+    input: input as never,
+    logs: false,
+  });
+
+  const data = (response as { data?: { images?: Array<{ url: string }> } }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("SDXL refine endpoint returned no image URL");
+  return url;
 }
 
 // ============================================================

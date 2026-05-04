@@ -89,7 +89,7 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
   const [guidanceSweepResults, setGuidanceSweepResults] = useState<SweepResult | null>(null);
   const [chosenStrength, setChosenStrength] = useState<number | null>(null);
   const [chosenGuidance, setChosenGuidance] = useState<number | null>(null);
-  const [savedTuning, setSavedTuning] = useState<{ loraScale: number; guidanceScale: number; setAt: string; notes?: string } | null>(null);
+  const [savedTuning, setSavedTuning] = useState<{ loraScale: number; guidanceScale: number; setAt: string; notes?: string; autoRefine?: boolean } | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -678,6 +678,43 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
             <strong>locked:</strong> strength={savedTuning.loraScale.toFixed(1)},
             guidance={savedTuning.guidanceScale.toFixed(1)} · saved {new Date(savedTuning.setAt).toLocaleString()}
             <button onClick={clearTuning} style={S.btnGhost}>clear</button>
+          </div>
+        )}
+
+        {savedTuning && (
+          <div style={{ ...S.tuningStatus, marginTop: 4 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={savedTuning.autoRefine || false}
+                onChange={async (e) => {
+                  const next = e.target.checked;
+                  try {
+                    const res = await authedFetch("/api/admin/lora/tuning", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        loraScale: savedTuning.loraScale,
+                        guidanceScale: savedTuning.guidanceScale,
+                        notes: savedTuning.notes,
+                        autoRefine: next,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                      setSavedTuning(data.tuning);
+                      addLog(
+                        next ? "auto-refine ON: every fal gen runs 2 passes (~$0.10/image)" : "auto-refine OFF",
+                        "success"
+                      );
+                    }
+                  } catch (err) {
+                    addLog(`toggle error: ${err instanceof Error ? err.message : err}`, "error");
+                  }
+                }}
+              />
+              <strong>auto-refine pass</strong> — second img2img pass at strength 0.3 to fix floating objects/bad anatomy. Doubles cost.
+            </label>
           </div>
         )}
 
