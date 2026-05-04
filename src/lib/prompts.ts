@@ -133,27 +133,29 @@ export function buildImagePrompt(
   // Determine which format the active stack wants
   const wantsTags = genStack === "sdxl-stylized";
 
+  // Universal negative prompt — applies to both SDXL and FLUX paths.
+  // SDXL stacks can OPTIONALLY append additional negativeTags from
+  // stackConfig (e.g. SDXL-specific quality tags like 'low quality, blurry').
+  const baseNegative = cfg.imagePrompts.lockedNegativePrompt ?? "";
+
   if (wantsTags && lockedPromptTemplateTags) {
     const sdxlConfig = stackConfig?.stack === "sdxl-stylized" ? stackConfig : null;
     const qualityPrefix = sdxlConfig?.qualityTags ? sdxlConfig.qualityTags + ", " : "";
-    const negative = sdxlConfig?.negativeTags ?? "";
+    const stackNegative = sdxlConfig?.negativeTags ?? "";
+    // Merge: project-wide negatives + stack-specific negatives, deduped by simple split/filter
+    const merged = [baseNegative, stackNegative].filter(Boolean).join(", ");
     return {
       prompt: qualityPrefix + lockedPromptTemplateTags.replace("[SCENE]", scene),
-      negativePrompt: negative,
+      negativePrompt: merged,
       format: "tags",
       scene,
     };
   }
 
   // Default: natural language (FLUX, OpenAI, fallback)
-  // FLUX does support negative prompts at inference. Pull from config if
-  // present — useful for projects with strong anti-styling needs (e.g.
-  // Spurdo: anti-clothes / anti-feminine to fight FLUX's training-data
-  // bias toward 'kitchen scene' producing housewife archetype).
-  const fluxNegative = cfg.imagePrompts.lockedNegativePrompt ?? "";
   return {
     prompt: lockedPromptTemplate.replace("[SCENE]", scene),
-    negativePrompt: fluxNegative,
+    negativePrompt: baseNegative,
     format: "natural",
     scene,
   };

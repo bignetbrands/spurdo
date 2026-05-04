@@ -858,10 +858,10 @@ function typeColor(t: LogEntry["type"]): string {
 }
 
 function labelForProvider(p: "bank" | "fal" | "openai" | "custom"): string {
-  if (p === "bank") return "bank (curated memes) — free, on-canon";
+  if (p === "bank") return "bank (curated memes) — recommended, on-canon";
   if (p === "custom") return "custom upload — your image";
-  if (p === "fal") return "fal (FLUX + LoRA) — generated";
-  return "openai (gpt-image-1) — generated";
+  if (p === "fal") return "fal (SDXL + LoRA) — experimental, may produce off-canon";
+  return "openai (gpt-image-1) — experimental, may produce off-canon";
 }
 
 /** Convert a File to a base64 data URL for transport to post-now. */

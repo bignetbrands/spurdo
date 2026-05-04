@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/family-engage",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/bank-refresh",
+      "schedule": "0 6 * * 1"
     }
   ]
 }
