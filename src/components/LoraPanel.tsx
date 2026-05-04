@@ -62,12 +62,6 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
   const [notes, setNotes] = useState("");
   const [artStyle, setArtStyle] = useState<"photorealistic" | "mspaint">("photorealistic");
   const [submitting, setSubmitting] = useState(false);
-  // BYO URL import (for externally-trained LoRAs, e.g. SDXL trained on Replicate)
-  const [importUrl, setImportUrl] = useState("");
-  const [importNotes, setImportNotes] = useState("");
-  const [importStack, setImportStack] = useState<"flux-photoreal" | "sdxl-stylized">("sdxl-stylized");
-  const [importStyle, setImportStyle] = useState<"photorealistic" | "mspaint">("mspaint");
-  const [importing, setImporting] = useState(false);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -188,41 +182,6 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
       setSubmitting(false);
     }
   }, [imageFiles, steps, notes, artStyle, authedFetch, addLog, startPolling]);
-
-  const importLoraUrl = useCallback(async () => {
-    if (!importUrl.trim()) {
-      addLog("paste a LoRA URL first", "warn");
-      return;
-    }
-    setImporting(true);
-    addLog(`importing LoRA URL (${importStack})…`, "info");
-    try {
-      const res = await authedFetch("/api/admin/lora/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: importUrl.trim(),
-          notes: importNotes.trim() || undefined,
-          trainedForStack: importStack,
-          artStyle: importStyle,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        addLog(`import failed: ${data.error || res.status}`, "error");
-        return;
-      }
-      addLog(`imported! id ${data.entry.id} — set it active in the registry below`, "success");
-      if (data.warning) addLog(data.warning, "warn");
-      setImportUrl("");
-      setImportNotes("");
-      await fetchRegistry();
-    } catch (err) {
-      addLog(`import error: ${err instanceof Error ? err.message : err}`, "error");
-    } finally {
-      setImporting(false);
-    }
-  }, [importUrl, importNotes, importStack, importStyle, authedFetch, addLog, fetchRegistry]);
 
   // ── Registry actions ──
   const setActive = useCallback(
@@ -474,62 +433,6 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         </div>
       )}
 
-      {/* IMPORT BY URL — for externally-trained LoRAs (e.g. SDXL on Replicate) */}
-      <div style={S.importSection}>
-        <h3 style={S.h3}>import LoRA by URL</h3>
-        <p style={S.subtle}>
-          for LoRAs trained outside Fal — e.g. SDXL trained on Replicate, or a style LoRA
-          downloaded from civitai. paste the direct <code>.safetensors</code> URL.
-        </p>
-        <label style={S.label}>LoRA url</label>
-        <input
-          type="text"
-          value={importUrl}
-          onChange={(e) => setImportUrl(e.target.value)}
-          placeholder="https://replicate.delivery/.../trained_model.safetensors"
-          disabled={importing}
-          style={S.input}
-        />
-        <div style={S.formRow}>
-          <label style={{ ...S.label, flex: 1 }}>
-            stack
-            <select
-              value={importStack}
-              onChange={(e) => setImportStack(e.target.value as "flux-photoreal" | "sdxl-stylized")}
-              disabled={importing}
-              style={S.select}
-            >
-              <option value="sdxl-stylized">sdxl-stylized (SDXL base)</option>
-              <option value="flux-photoreal">flux-photoreal (FLUX base)</option>
-            </select>
-          </label>
-          <label style={{ ...S.label, flex: 1 }}>
-            art style
-            <select
-              value={importStyle}
-              onChange={(e) => setImportStyle(e.target.value as "photorealistic" | "mspaint")}
-              disabled={importing}
-              style={S.select}
-            >
-              <option value="mspaint">ms paint / stylized</option>
-              <option value="photorealistic">photorealistic</option>
-            </select>
-          </label>
-        </div>
-        <label style={S.label}>notes (optional)</label>
-        <input
-          type="text"
-          value={importNotes}
-          onChange={(e) => setImportNotes(e.target.value)}
-          placeholder="e.g. spurdo identity v2 — replicate, 30 steps, 12 imgs"
-          disabled={importing}
-          style={S.input}
-        />
-        <button onClick={importLoraUrl} disabled={importing || !importUrl.trim()} style={S.btnPrimary}>
-          {importing ? "importing…" : "import LoRA"}
-        </button>
-      </div>
-
       {/* REGISTRY */}
       <div style={S.registrySection}>
         <div style={S.cardHeader}>
@@ -720,7 +623,6 @@ const S: Record<string, React.CSSProperties> = {
   jobMeta: { fontFamily: "monospace", fontSize: 11, color: "#5a3820", marginTop: 4 },
   link: { color: "#1a1a1a", textDecoration: "underline" },
   registrySection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
-  importSection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
   activeBanner: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: 10, background: "#e3f2d8", border: "2px solid #0a8c3a", marginBottom: 12, fontFamily: "monospace", fontSize: 11, gap: 8, flexWrap: "wrap" },
   empty: { fontStyle: "italic", color: "#888", padding: 12, textAlign: "center" },
   regList: { display: "flex", flexDirection: "column", gap: 8 },
