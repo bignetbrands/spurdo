@@ -62,6 +62,9 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
   const [notes, setNotes] = useState("");
   const [artStyle, setArtStyle] = useState<"photorealistic" | "mspaint">("photorealistic");
   const [submitting, setSubmitting] = useState(false);
+  // Upload pre-trained LoRA file (e.g. downloaded from Replicate)
+  const [trainedFile, setTrainedFile] = useState<File | null>(null);
+  const [uploadingTrained, setUploadingTrained] = useState(false);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -182,6 +185,43 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
       setSubmitting(false);
     }
   }, [imageFiles, steps, notes, artStyle, authedFetch, addLog, startPolling]);
+
+  const uploadTrainedLora = useCallback(async () => {
+    if (!trainedFile) {
+      addLog("pick a trained LoRA file first (.tar or .safetensors)", "warn");
+      return;
+    }
+    setUploadingTrained(true);
+    addLog(`uploading ${trainedFile.name} (${(trainedFile.size / 1024 / 1024).toFixed(1)} MB)…`, "info");
+    try {
+      const form = new FormData();
+      form.append("file", trainedFile);
+      form.append("trainedForStack", artStyle === "mspaint" ? "sdxl-stylized" : "flux-photoreal");
+      form.append("artStyle", artStyle);
+      if (notes.trim()) form.append("notes", notes.trim());
+
+      const res = await authedFetch("/api/admin/lora/upload-trained", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        addLog(`upload failed: ${data.error || res.status}`, "error");
+        return;
+      }
+      addLog(
+        `uploaded ${data.sizeMB} MB — added to registry (id: ${data.entry.id}). set active in registry below.`,
+        "success"
+      );
+      setTrainedFile(null);
+      setNotes("");
+      await fetchRegistry();
+    } catch (err) {
+      addLog(`upload error: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setUploadingTrained(false);
+    }
+  }, [trainedFile, artStyle, notes, authedFetch, addLog, fetchRegistry]);
 
   // ── Registry actions ──
   const setActive = useCallback(
@@ -433,6 +473,34 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
         </div>
       )}
 
+      {/* UPLOAD ALREADY-TRAINED LoRA — for files trained elsewhere */}
+      <div style={S.uploadTrainedSection}>
+        <h3 style={S.h3}>upload trained LoRA</h3>
+        <p style={S.subtle}>
+          already have a trained LoRA file (.tar or .safetensors)? upload it here.
+          uses the art style you picked above.
+        </p>
+        <input
+          type="file"
+          accept=".safetensors,.tar,.bin"
+          onChange={(e) => setTrainedFile(e.target.files?.[0] || null)}
+          disabled={uploadingTrained}
+          style={S.input}
+        />
+        {trainedFile && (
+          <p style={S.subtle}>
+            <strong>{trainedFile.name}</strong> · {(trainedFile.size / 1024 / 1024).toFixed(1)} MB
+          </p>
+        )}
+        <button
+          onClick={uploadTrainedLora}
+          disabled={uploadingTrained || !trainedFile}
+          style={S.btnPrimary}
+        >
+          {uploadingTrained ? "uploading…" : "upload to registry"}
+        </button>
+      </div>
+
       {/* REGISTRY */}
       <div style={S.registrySection}>
         <div style={S.cardHeader}>
@@ -623,6 +691,7 @@ const S: Record<string, React.CSSProperties> = {
   jobMeta: { fontFamily: "monospace", fontSize: 11, color: "#5a3820", marginTop: 4 },
   link: { color: "#1a1a1a", textDecoration: "underline" },
   registrySection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
+  uploadTrainedSection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
   activeBanner: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: 10, background: "#e3f2d8", border: "2px solid #0a8c3a", marginBottom: 12, fontFamily: "monospace", fontSize: 11, gap: 8, flexWrap: "wrap" },
   empty: { fontStyle: "italic", color: "#888", padding: 12, textAlign: "center" },
   regList: { display: "flex", flexDirection: "column", gap: 8 },
