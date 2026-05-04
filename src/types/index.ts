@@ -199,6 +199,15 @@ export interface ImagePromptsConfig {
   /** Natural-language prompt template for FLUX/OpenAI. SDXL stacks override per-stack. */
   lockedPromptTemplate: string;
   /**
+   * Negative prompt for the FLUX stack (or any natural-language stack
+   * that supports it). Comma-separated phrases describing what NOT to
+   * render. Useful when FLUX's training-data biases pull output away
+   * from canon (e.g. a male brown bear getting feminized into a
+   * housewife archetype when placed in a kitchen scene). Optional —
+   * empty string is fine.
+   */
+  lockedNegativePrompt?: string;
+  /**
    * SDXL/Pony tag-based prompt template. Used only when genStack is sdxl-stylized.
    * Comma-separated tags with [SCENE] placeholder.
    */

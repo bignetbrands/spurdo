@@ -146,9 +146,14 @@ export function buildImagePrompt(
   }
 
   // Default: natural language (FLUX, OpenAI, fallback)
+  // FLUX does support negative prompts at inference. Pull from config if
+  // present — useful for projects with strong anti-styling needs (e.g.
+  // Spurdo: anti-clothes / anti-feminine to fight FLUX's training-data
+  // bias toward 'kitchen scene' producing housewife archetype).
+  const fluxNegative = cfg.imagePrompts.lockedNegativePrompt ?? "";
   return {
     prompt: lockedPromptTemplate.replace("[SCENE]", scene),
-    negativePrompt: "",
+    negativePrompt: fluxNegative,
     format: "natural",
     scene,
   };
