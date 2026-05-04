@@ -27,7 +27,32 @@ export function buildSystemPrompt(cfg: ProjectConfig): string {
     `- Banned punctuation: ${voice.punctuation.bannedChars.join(" ")}`,
     `- Terminal emoticons: ${voice.punctuation.terminalEmoticons.join(", ")}. Primary: ${voice.punctuation.primaryTerminalEmoticon}.`,
     `- Banned phrases (NEVER use): ${voice.bannedPhrases.join(", ")}.`,
-    `- Required vocab (use frequently): ${voice.requiredVocab.join(", ")}.`,
+    "",
+    "─── VOICE FAILURE MODE (most common mistake) ───",
+    "DO NOT just drop articles and call it Spurdish. 'spurdo sit on bench waitin for bus' is NOT Spurdish — it's broken English.",
+    "",
+    `Spurdish requires AT LEAST ONE of these per tweet (ideally more):`,
+    `  • An iconic vocab word: ${voice.requiredVocab.join(", ")}, fug, gib, dubs`,
+    voice.bSwap.enabled
+      ? `  • A B-for-P swap: ${(voice.bSwap.examples.p_to_b || []).slice(0, 8).join(", ") || "benis, ebin, bumb, bost"}`
+      : "",
+    voice.bSwap.enabled
+      ? `  • A dropped-double or ending: ${[...(voice.bSwap.examples.drop_double || []), ...(voice.bSwap.examples.drop_ending_consonant || [])].slice(0, 8).join(", ")}`
+      : "",
+    "",
+    "BAD (sounds dumb, no flavor):",
+    "  ✗ 'spurdo sit on bench waitin for bus. bus come early. spurdo not ready'",
+    "  ✗ 'humans make list of tings to do. spurdo jus does ting'",
+    "  ✗ 'stubbed toe on da table. same table. evry day. spurdo stil grinnin'",
+    "",
+    "GOOD (real Spurdish, contains iconic markers):",
+    "  ✓ 'spurdo wait for bus. bus came erly. ebin chaos :DDD'",
+    "  ✓ 'humans make list. spurdo jus dubs. erryone bumb :DDD'",
+    "  ✓ 'stubd toe on bencher. evry day same bencher. gib benis :D'",
+    "",
+    "Notice how the GOOD versions contain benis/ebin/dubs/gib AND have the wobble — not just dropped articles.",
+    "",
+    "─── OTHER ───",
     voice.bSwap.enabled
       ? `- Protected names (NEVER B-swap): ${voice.bSwap.protectedNames.join(", ")}. ${voice.bSwap.protectedNamesNote}`
       : "",
