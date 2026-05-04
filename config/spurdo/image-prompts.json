@@ -8,14 +8,8 @@
     "guidanceScale": 7.0,
     "qualityTags": "mspaint, ms paint style, abysmal quality, crude amateur drawing",
     "negativeTags": "photo, photorealistic, 3d render, smooth shading, anime, vector art, polished, professional illustration, gradients",
-    "defaultStyleLoras": [
-      {
-        "url": "https://huggingface.co/victor/MSpaint/resolve/main/SDXL_MSPaint_Portrait.safetensors",
-        "scale": 0.9,
-        "label": "MS Paint Portraits (HF mirror of civitai 183354)",
-        "triggerWord": "MSPaint"
-      }
-    ],
+    "defaultStyleLoras": [],
+    "defaultStyleLorasComment": "Empty by design. The Spurdo identity LoRA (trained on actual Spurdo memes) already encodes the MS-Paint aesthetic — adding a separate style LoRA on top double-counts the style and constrains the model. Identity LoRA gets attached automatically from the active registry entry; that's the only LoRA we need.",
     "stackChoiceComment": "ACTIVATED for Spurdo on May 2026. SDXL with stacked LoRAs (civitai MS Paint style + Replicate-trained Spurdo identity). Style LoRA URL is civitai's public download endpoint. Identity LoRA must be set active in /bot LoRA registry — paste the .tar URL from Replicate via 'import LoRA by URL' panel. fal-ai/lora endpoint accepts both .safetensors and .tar from Replicate (auto-extracts)."
   },
   "fluxStackConfigArchived": {
