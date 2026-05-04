@@ -8,8 +8,15 @@
     "guidanceScale": 7.5,
     "qualityTags": "",
     "negativeTags": "low quality, blurry, jpeg artifacts, watermark, signature",
-    "defaultStyleLoras": [],
-    "defaultStyleLorasComment": "Empty by design. The Spurdo identity LoRA (trained on actual Spurdo memes) already encodes the MS-Paint aesthetic — adding a separate style LoRA on top double-counts the style and constrains the model. Identity LoRA gets attached automatically from the active registry entry; that's the only LoRA we need.",
+    "defaultStyleLoras": [
+      {
+        "url": "https://huggingface.co/victor/MSpaint/resolve/main/SDXL_MSPaint_Portrait.safetensors",
+        "scale": 0.8,
+        "label": "MSPaint style (HF victor/MSpaint)",
+        "triggerWord": "MSPaint"
+      }
+    ],
+    "defaultStyleLorasComment": "Stacking a dedicated MS Paint style LoRA on top of the trained Spurdo identity LoRA. The identity LoRA encodes Spurdo's character features (head shape, muzzle, eyes, body) but doesn't reliably produce the MS Paint amateur aesthetic. This style LoRA fills that gap. Trigger word 'MSPaint' is auto-prepended to prompts. Scale 0.8 is a starting point — re-run calibration sweep if outputs are over/under stylized. URL is huggingface.co's /resolve/ endpoint which serves the actual binary (not the LFS pointer). Earlier failure was a different bug (Replicate .tar archive) not this URL.",
     "stackChoiceComment": "ACTIVATED for Spurdo. SDXL with single Spurdo identity LoRA from the registry. qualityTags removed (now in lockedPromptTemplateTags). negativeTags pruned to SDXL-specific quality issues; project-wide negatives (anti-duplication, anti-feminine, anti-photoreal) are in lockedNegativePrompt and merge with these at inference."
   },
   "fluxStackConfigArchived": {
