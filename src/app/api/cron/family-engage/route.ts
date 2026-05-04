@@ -190,11 +190,17 @@ export async function GET(request: Request) {
   });
 
   if (!result.ok) {
+    // Mark this tweet as "handled" in the dedupe set so we don't keep
+    // retrying it every 2 hours. Common cause of repeated failure is
+    // a 403 from X (target account has reply restrictions, deleted the
+    // tweet, blocked us, etc) — those don't get better by retrying.
+    await markMentionReplied(target.id).catch(() => undefined);
     return NextResponse.json({
       processed: 0,
       error: result.error,
       pickedHandle: picked.handle,
       targetTweetId: target.id,
+      markedAsHandled: true,
       timestamp: new Date().toISOString(),
     });
   }
