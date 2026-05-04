@@ -77,7 +77,7 @@ export interface GenerateImageResult {
  */
 export async function generateImage(opts: GenerateImageOptions): Promise<GenerateImageResult> {
   const cfg = loadConfig();
-  const requested = opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "fal";
+  const requested = opts.provider || (process.env.IMAGE_PROVIDER as ImageProvider) || "bank";
 
   // ── BANK: free, no budget, no API ──
   if (requested === "bank") {
