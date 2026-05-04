@@ -55,6 +55,12 @@ export interface ActiveJob {
   trainedForStack?: "flux-photoreal" | "sdxl-stylized";
   /** Art style picked for training */
   artStyle?: "photorealistic" | "mspaint";
+  /**
+   * Which trainer service handled this job. Affects how status polling
+   * works (Fal has its own polling, Replicate has another). 'fal' is
+   * the default for backward compatibility with existing jobs in KV.
+   */
+  trainer?: "fal" | "replicate";
 }
 
 // ────────── KV helpers ──────────

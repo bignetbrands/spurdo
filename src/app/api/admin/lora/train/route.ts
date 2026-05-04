@@ -3,6 +3,11 @@ import JSZip from "jszip";
 import { checkAdminAuth } from "@/lib/auth";
 import { uploadZipToFal, submitTrainingJob, saveJob } from "@/lib/lora";
 import type { ActiveJob } from "@/lib/lora";
+import {
+  submitReplicateTraining,
+  uploadTrainingZipToReplicate,
+  ensureDestinationModel,
+} from "@/lib/replicate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -156,7 +161,130 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Upload to Fal storage ──
+  // ============================================================
+  // DISPATCH: Replicate (SDXL) for mspaint, Fal (FLUX) for photoreal
+  // ============================================================
+  // The training backend depends on the art style. SDXL handles amateur/
+  // crude art styles much better than FLUX, but Fal doesn't host SDXL
+  // training — so we route mspaint jobs to Replicate's API.
+  // ============================================================
+
+  // Resolve "auto" → concrete style based on project genStack (matches lora.ts)
+  let resolvedArtStyle: "photorealistic" | "mspaint";
+  if (artStyle === "auto") {
+    // Default to mspaint for SaaS; this is the harder case and the one
+    // operators with stylized projects need
+    resolvedArtStyle = "mspaint";
+  } else {
+    resolvedArtStyle = artStyle;
+  }
+
+  const useReplicate = resolvedArtStyle === "mspaint";
+
+  if (useReplicate) {
+    // ── Replicate path (SDXL training) ──
+
+    // Replicate requires a destination model on the user's account. We
+    // derive owner/project-name from env. The owner is fixed per
+    // deployment (the GitHub/Vercel org) and the model name is per
+    // project so different projects have separate trained models.
+    const replicateOwner = process.env.REPLICATE_OWNER;
+    if (!replicateOwner) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "REPLICATE_OWNER env var not set. Add it in Vercel project settings (your Replicate username/org).",
+        },
+        { status: 500 }
+      );
+    }
+    const projectName = process.env.PROJECT || "spurdo";
+    const destinationModel = `${replicateOwner}/${projectName}-sdxl`;
+
+    // Ensure destination model exists (creates if not)
+    try {
+      await ensureDestinationModel({
+        owner: replicateOwner,
+        modelName: `${projectName}-sdxl`,
+        description: `SDXL LoRA trained for ${projectName}`,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Failed to create/verify Replicate destination model: ${err instanceof Error ? err.message : err}`,
+        },
+        { status: 502 }
+      );
+    }
+
+    // Upload zip to Replicate's Files API (24h TTL — fine for training)
+    let imagesZipUrl: string;
+    try {
+      imagesZipUrl = await uploadTrainingZipToReplicate(zipBuffer, originalFilename);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Replicate upload failed: ${err instanceof Error ? err.message : err}`,
+        },
+        { status: 502 }
+      );
+    }
+
+    // Submit training
+    let replicateJob: { id: string; status: string; webUrl: string };
+    try {
+      replicateJob = await submitReplicateTraining({
+        imagesZipUrl,
+        destinationModel,
+        artStyle: resolvedArtStyle,
+        steps,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Replicate training submit failed: ${err instanceof Error ? err.message : err}`,
+        },
+        { status: 502 }
+      );
+    }
+
+    // Persist job tracker (trainer="replicate" so polling routes correctly)
+    const jobId = `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const job: ActiveJob = {
+      id: jobId,
+      requestId: replicateJob.id,
+      status: "queued",
+      submittedAt: new Date().toISOString(),
+      trainingSteps: steps,
+      notes,
+      trainingSetFilename: originalFilename,
+      trainingEndpoint: `replicate:${destinationModel}`,
+      trainedForStack: "sdxl-stylized",
+      artStyle: resolvedArtStyle,
+      trainer: "replicate",
+    };
+    await saveJob(job);
+
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      requestId: replicateJob.id,
+      status: "queued",
+      trainer: "replicate",
+      inputMode: images.length > 0 ? "multi-image" : "zip",
+      fileCount: images.length || 1,
+      trainingEndpoint: `replicate:${destinationModel}`,
+      trainedForStack: "sdxl-stylized",
+      artStyle: resolvedArtStyle,
+      destinationModel,
+      replicateWebUrl: replicateJob.webUrl,
+    });
+  }
+
+  // ── Fal path (FLUX training, photorealistic) ──
   let imagesDataUrl: string;
   try {
     imagesDataUrl = await uploadZipToFal(zipBuffer, originalFilename);
@@ -167,7 +295,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Submit training job (stack-aware + art-style-aware) ──
   let trainingResult: Awaited<ReturnType<typeof submitTrainingJob>>;
   try {
     trainingResult = await submitTrainingJob(imagesDataUrl, steps, artStyle);
@@ -179,7 +306,6 @@ export async function POST(request: Request) {
   }
   const { requestId, endpoint: trainingEndpoint, trainedForStack, artStyleUsed } = trainingResult;
 
-  // ── Persist job tracker ──
   const jobId = `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const job: ActiveJob = {
     id: jobId,
@@ -193,6 +319,7 @@ export async function POST(request: Request) {
     trainingEndpoint,
     trainedForStack,
     artStyle: artStyleUsed,
+    trainer: "fal",
   };
   await saveJob(job);
 
@@ -201,6 +328,7 @@ export async function POST(request: Request) {
     jobId,
     requestId,
     status: "queued",
+    trainer: "fal",
     inputMode: images.length > 0 ? "multi-image" : "zip",
     fileCount: images.length || 1,
     trainingEndpoint,

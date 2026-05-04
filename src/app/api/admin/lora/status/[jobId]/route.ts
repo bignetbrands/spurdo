@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/auth";
 import { getJob, saveJob, pollTrainingJob, addToRegistry } from "@/lib/lora";
+import { pollReplicateTraining } from "@/lib/replicate";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/admin/lora/status/[jobId]
  *
- * Polls the underlying Fal training job for its current status.
+ * Polls the underlying training job for its current status. Routes to
+ * Replicate or Fal based on job.trainer.
+ *
  * When the job transitions to "completed", auto-promotes it to
  * the LoRA registry (but does NOT auto-set as active — operator
  * confirms via /api/admin/lora/active).
@@ -31,20 +34,48 @@ export async function GET(
     return NextResponse.json({ ok: false, error: `job not found: ${jobId}` }, { status: 404 });
   }
 
-  // Already terminal → just return cached state (no extra Fal call)
+  // Already terminal → just return cached state (no extra poll call)
   if (job.status === "completed" || job.status === "failed") {
     return NextResponse.json({ ok: true, job });
   }
 
-  // Poll Fal — pass the original training endpoint so we use the right poll URL
-  let polled: Awaited<ReturnType<typeof pollTrainingJob>>;
-  try {
-    polled = await pollTrainingJob(job.requestId, job.trainingEndpoint);
-  } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: `Fal poll failed: ${err instanceof Error ? err.message : err}` },
-      { status: 502 }
-    );
+  // ── Dispatch poll to the right backend ──
+  // Default to "fal" for legacy jobs that don't have the trainer field
+  const trainer = job.trainer || "fal";
+
+  let polled: { status: "submitting" | "queued" | "in_progress" | "completed" | "failed"; loraUrl?: string; error?: string };
+
+  if (trainer === "replicate") {
+    try {
+      const r = await pollReplicateTraining(job.requestId);
+      // Map Replicate status to our status enum
+      let mappedStatus: typeof polled.status;
+      if (r.status === "starting") mappedStatus = "queued";
+      else if (r.status === "processing") mappedStatus = "in_progress";
+      else if (r.status === "succeeded") mappedStatus = "completed";
+      else if (r.status === "failed" || r.status === "canceled") mappedStatus = "failed";
+      else mappedStatus = "in_progress";
+
+      polled = {
+        status: mappedStatus,
+        loraUrl: r.weightsUrl,
+        error: r.error,
+      };
+    } catch (err) {
+      return NextResponse.json(
+        { ok: false, error: `Replicate poll failed: ${err instanceof Error ? err.message : err}` },
+        { status: 502 }
+      );
+    }
+  } else {
+    try {
+      polled = await pollTrainingJob(job.requestId, job.trainingEndpoint);
+    } catch (err) {
+      return NextResponse.json(
+        { ok: false, error: `Fal poll failed: ${err instanceof Error ? err.message : err}` },
+        { status: 502 }
+      );
+    }
   }
 
   // Apply the new status
