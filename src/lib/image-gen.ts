@@ -380,11 +380,28 @@ async function generateViaSdxlStack(args: {
     loras: lorasUsed.map((l) => ({ path: l.url, scale: l.scale ?? 1.0 })),
   };
 
+  console.log("[image-gen/sdxl] submit", {
+    endpoint: args.endpoint,
+    baseModel,
+    promptPreview: finalPrompt.slice(0, 120),
+    loraCount: lorasUsed.length,
+    loras: lorasUsed.map((l) => ({ url: l.url.slice(0, 80), scale: l.scale, role: l.role })),
+  });
+
   const { result } = await retryWithBackoff(
     () =>
       fal.subscribe(args.endpoint as never, {
         input: input as never,
         logs: false,
+      }).catch((err: unknown) => {
+        // Fal errors come back with a body that has the real reason — surface it
+        const e = err as { body?: unknown; message?: string; status?: number };
+        const detail = e.body ? JSON.stringify(e.body).slice(0, 500) : e.message || String(err);
+        console.error("[image-gen/sdxl] fal error", {
+          status: e.status,
+          detail,
+        });
+        throw new Error(`Fal SDXL error${e.status ? ` (${e.status})` : ""}: ${detail}`);
       }),
     {
       maxAttempts: 3,
