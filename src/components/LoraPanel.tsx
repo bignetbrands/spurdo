@@ -49,9 +49,10 @@ interface ActiveJob {
 interface Props {
   authedFetch: (url: string, init?: RequestInit) => Promise<Response>;
   addLog: LogFn;
+  adminSecret: string;
 }
 
-export function LoraPanel({ authedFetch, addLog }: Props) {
+export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
   const [registry, setRegistry] = useState<LoraEntry[]>([]);
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [loadingRegistry, setLoadingRegistry] = useState(false);
@@ -192,25 +193,40 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
       return;
     }
     setUploadingTrained(true);
-    addLog(`uploading ${trainedFile.name} (${(trainedFile.size / 1024 / 1024).toFixed(1)} MB)…`, "info");
+    const sizeMB = (trainedFile.size / 1024 / 1024).toFixed(1);
+    addLog(`uploading ${trainedFile.name} (${sizeMB} MB) directly to storage…`, "info");
     try {
-      const form = new FormData();
-      form.append("file", trainedFile);
-      form.append("trainedForStack", artStyle === "mspaint" ? "sdxl-stylized" : "flux-photoreal");
-      form.append("artStyle", artStyle);
-      if (notes.trim()) form.append("notes", notes.trim());
+      // Direct browser → Vercel Blob upload, bypasses 4.5MB serverless limit.
+      // The `upload()` helper hits our /upload-token endpoint to get a signed
+      // token, then PUTs the file directly to Blob.
+      const { upload } = await import("@vercel/blob/client");
+      const blob = await upload(`loras/${trainedFile.name}`, trainedFile, {
+        access: "public",
+        handleUploadUrl: `/api/admin/lora/upload-token?secret=${encodeURIComponent(adminSecret)}`,
+        multipart: true, // splits large files into chunks for parallel upload
+      });
+      addLog(`upload complete, registering…`, "info");
 
-      const res = await authedFetch("/api/admin/lora/upload-trained", {
+      // Now tell the server to register (and extract from .tar if needed)
+      const res = await authedFetch("/api/admin/lora/register-uploaded", {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blobUrl: blob.url,
+          originalFilename: trainedFile.name,
+          notes: notes.trim() || undefined,
+          trainedForStack: artStyle === "mspaint" ? "sdxl-stylized" : "flux-photoreal",
+          artStyle,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
-        addLog(`upload failed: ${data.error || res.status}`, "error");
+        addLog(`register failed: ${data.error || res.status}`, "error");
         return;
       }
+      const extractedNote = data.extracted ? " (extracted from .tar)" : "";
       addLog(
-        `uploaded ${data.sizeMB} MB — added to registry (id: ${data.entry.id}). set active in registry below.`,
+        `registered LoRA ${data.entry.id}${extractedNote} — set active in registry below.`,
         "success"
       );
       setTrainedFile(null);
@@ -221,7 +237,7 @@ export function LoraPanel({ authedFetch, addLog }: Props) {
     } finally {
       setUploadingTrained(false);
     }
-  }, [trainedFile, artStyle, notes, authedFetch, addLog, fetchRegistry]);
+  }, [trainedFile, artStyle, notes, adminSecret, authedFetch, addLog, fetchRegistry]);
 
   // ── Registry actions ──
   const setActive = useCallback(

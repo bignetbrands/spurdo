@@ -756,7 +756,7 @@ export default function BotDashboard() {
         <StyleLoraPanel authedFetch={authedFetch} addLog={addLog} />
 
         {/* LORA — M2.5 */}
-        <LoraPanel authedFetch={authedFetch} addLog={addLog} />
+        <LoraPanel authedFetch={authedFetch} addLog={addLog} adminSecret={secret} />
 
         {/* CONTROLS */}
         <section style={S.card}>
