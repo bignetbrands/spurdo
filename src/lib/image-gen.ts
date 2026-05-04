@@ -10,6 +10,7 @@ import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
 import { pickMemeForPillar } from "./meme-bank";
 import { resolveStyleLoras } from "./style-loras";
+import { getSdxlTuning } from "./sdxl-tuning";
 import type { PillarId, GenStack, StackConfig, StackedLora } from "@/types";
 
 // ============================================================
@@ -53,6 +54,17 @@ export interface GenerateImageOptions {
   loraUrl?: string;
   /** Identity LoRA scale (0-2). Default depends on stack. */
   loraScale?: number;
+  /**
+   * Optional fixed seed for reproducible composition. When set, two
+   * calls with the same seed (and same prompt+LoRA) produce visually
+   * similar layouts. Used by calibration sweeps to compare strengths
+   * apples-to-apples.
+   */
+  seed?: number;
+  /** Optional guidance_scale override (SDXL only). Falls back to stackConfig. */
+  guidanceScaleOverride?: number;
+  /** Optional num_inference_steps override (SDXL only). Falls back to stackConfig. */
+  inferenceStepsOverride?: number;
 }
 
 export interface GenerateImageResult {
@@ -150,15 +162,22 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
       const cfgSdxl = stackConfig?.stack === "sdxl-stylized" ? stackConfig : null;
       // Style LoRAs: KV runtime override (if set) > config defaults > none
       const { loras: styleLoras } = await resolveStyleLoras();
+      // SDXL tuning override: KV (set by /api/admin/lora/calibrate) > config defaults
+      const tuning = await getSdxlTuning();
+      const effectiveLoraScale =
+        opts.loraScale ?? tuning?.loraScale ?? cfgSdxl?.defaultIdentityScale ?? 1.1;
+      const effectiveGuidance =
+        opts.guidanceScaleOverride ?? tuning?.guidanceScale ?? cfgSdxl?.guidanceScale ?? 7.0;
       result = await generateViaSdxlStack({
         prompt: built.prompt,
         negativePrompt: built.negativePrompt,
         identityLoraUrl,
-        identityScale: opts.loraScale ?? cfgSdxl?.defaultIdentityScale ?? 1.1,
+        identityScale: effectiveLoraScale,
         styleLoras,
         endpoint: cfgSdxl?.inferenceEndpoint || "fal-ai/lora",
-        numInferenceSteps: cfgSdxl?.numInferenceSteps ?? 30,
-        guidanceScale: cfgSdxl?.guidanceScale ?? 7.0,
+        numInferenceSteps: opts.inferenceStepsOverride ?? cfgSdxl?.numInferenceSteps ?? 30,
+        guidanceScale: effectiveGuidance,
+        seed: opts.seed,
       });
       break;
     }
@@ -313,6 +332,8 @@ async function generateViaSdxlStack(args: {
   endpoint: string;
   numInferenceSteps: number;
   guidanceScale: number;
+  /** Optional fixed seed — used by calibration sweeps to hold composition constant */
+  seed?: number;
 }): Promise<{ imageUrl: string; provider: ImageProvider; lorasUsed: StackedLora[] }> {
   ensureFalConfigured();
 
@@ -379,6 +400,9 @@ async function generateViaSdxlStack(args: {
     output_format: "png",
     loras: lorasUsed.map((l) => ({ path: l.url, scale: l.scale ?? 1.0 })),
   };
+  if (typeof args.seed === "number") {
+    input.seed = args.seed;
+  }
 
   console.log("[image-gen/sdxl] submit", {
     endpoint: args.endpoint,

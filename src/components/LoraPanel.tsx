@@ -46,6 +46,21 @@ interface ActiveJob {
   artStyle?: "photorealistic" | "mspaint";
 }
 
+interface SweepVariant {
+  ok: boolean;
+  label: string;
+  loraScale: number;
+  guidanceScale: number;
+  imageUrl?: string;
+  error?: string;
+}
+
+interface SweepResult {
+  mode: "strength" | "guidance";
+  seed: number;
+  variants: SweepVariant[];
+}
+
 interface Props {
   authedFetch: (url: string, init?: RequestInit) => Promise<Response>;
   addLog: LogFn;
@@ -66,6 +81,15 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
   // Upload pre-trained LoRA file (e.g. downloaded from Replicate)
   const [trainedFile, setTrainedFile] = useState<File | null>(null);
   const [uploadingTrained, setUploadingTrained] = useState(false);
+  // Calibration sweep state
+  const [sweepTweetText, setSweepTweetText] = useState("spurdo sittin at desk. screen glowin :DDD");
+  const [sweepPillarId, setSweepPillarId] = useState("scene_vignettes");
+  const [sweepRunning, setSweepRunning] = useState(false);
+  const [strengthSweepResults, setStrengthSweepResults] = useState<SweepResult | null>(null);
+  const [guidanceSweepResults, setGuidanceSweepResults] = useState<SweepResult | null>(null);
+  const [chosenStrength, setChosenStrength] = useState<number | null>(null);
+  const [chosenGuidance, setChosenGuidance] = useState<number | null>(null);
+  const [savedTuning, setSavedTuning] = useState<{ loraScale: number; guidanceScale: number; setAt: string; notes?: string } | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -238,6 +262,130 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
       setUploadingTrained(false);
     }
   }, [trainedFile, artStyle, notes, adminSecret, authedFetch, addLog, fetchRegistry]);
+
+  // ── Calibration sweep ──
+
+  const fetchTuning = useCallback(async () => {
+    try {
+      const res = await authedFetch("/api/admin/lora/tuning");
+      const data = await res.json();
+      if (data.ok) setSavedTuning(data.tuning);
+    } catch {
+      // silent
+    }
+  }, [authedFetch]);
+
+  const runStrengthSweep = useCallback(async () => {
+    setSweepRunning(true);
+    setStrengthSweepResults(null);
+    setChosenStrength(null);
+    addLog("running strength sweep (7 variants, ~$0.50, takes 1-2 min)…", "info");
+    try {
+      const res = await authedFetch("/api/admin/lora/calibrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "strength",
+          tweetText: sweepTweetText,
+          pillarId: sweepPillarId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        addLog(`strength sweep failed: ${data.error || res.status}`, "error");
+        return;
+      }
+      addLog(`strength sweep done: ${data.successCount}/${data.variantCount} succeeded (seed ${data.seed})`, "success");
+      setStrengthSweepResults({ mode: "strength", seed: data.seed, variants: data.variants });
+    } catch (err) {
+      addLog(`strength sweep error: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setSweepRunning(false);
+    }
+  }, [sweepTweetText, sweepPillarId, authedFetch, addLog]);
+
+  const runGuidanceSweep = useCallback(async () => {
+    if (chosenStrength === null) {
+      addLog("pick a winning strength first", "warn");
+      return;
+    }
+    setSweepRunning(true);
+    setGuidanceSweepResults(null);
+    setChosenGuidance(null);
+    addLog(`running guidance sweep at strength ${chosenStrength.toFixed(1)} (4 variants, ~$0.30)…`, "info");
+    try {
+      const res = await authedFetch("/api/admin/lora/calibrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "guidance",
+          tweetText: sweepTweetText,
+          pillarId: sweepPillarId,
+          fixedLoraScale: chosenStrength,
+          seed: strengthSweepResults?.seed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        addLog(`guidance sweep failed: ${data.error || res.status}`, "error");
+        return;
+      }
+      addLog(`guidance sweep done: ${data.successCount}/${data.variantCount} succeeded`, "success");
+      setGuidanceSweepResults({ mode: "guidance", seed: data.seed, variants: data.variants });
+    } catch (err) {
+      addLog(`guidance sweep error: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setSweepRunning(false);
+    }
+  }, [chosenStrength, strengthSweepResults, sweepTweetText, sweepPillarId, authedFetch, addLog]);
+
+  const lockTuning = useCallback(async () => {
+    if (chosenStrength === null || chosenGuidance === null) {
+      addLog("pick winners from both sweeps before locking", "warn");
+      return;
+    }
+    try {
+      const res = await authedFetch("/api/admin/lora/tuning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          loraScale: chosenStrength,
+          guidanceScale: chosenGuidance,
+          notes: `calibrated against tweet: "${sweepTweetText.slice(0, 60)}"`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        addLog(`lock failed: ${data.error || res.status}`, "error");
+        return;
+      }
+      addLog(
+        `tuning locked: strength=${chosenStrength.toFixed(1)}, guidance=${chosenGuidance.toFixed(1)} — autonomous gen will use these from now on`,
+        "success"
+      );
+      setSavedTuning(data.tuning);
+    } catch (err) {
+      addLog(`lock error: ${err instanceof Error ? err.message : err}`, "error");
+    }
+  }, [chosenStrength, chosenGuidance, sweepTweetText, authedFetch, addLog]);
+
+  const clearTuning = useCallback(async () => {
+    try {
+      const res = await authedFetch("/api/admin/lora/tuning", { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) {
+        addLog("tuning cleared — reverting to config defaults", "info");
+        setSavedTuning(null);
+      }
+    } catch (err) {
+      addLog(`clear error: ${err instanceof Error ? err.message : err}`, "error");
+    }
+  }, [authedFetch, addLog]);
+
+  // Load existing tuning on mount
+  useEffect(() => {
+    fetchTuning();
+  }, [fetchTuning]);
 
   // ── Registry actions ──
   const setActive = useCallback(
@@ -517,6 +665,133 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
         </button>
       </div>
 
+      {/* CALIBRATION SWEEP */}
+      <div style={S.calibrationSection}>
+        <h3 style={S.h3}>calibration (one-time)</h3>
+        <p style={S.subtle}>
+          tune your LoRA properly. run two sweeps, pick the best image from each, lock the
+          values. autonomous gen uses these from then on. ~$0.80 total.
+        </p>
+
+        {savedTuning && (
+          <div style={S.tuningStatus}>
+            <strong>locked:</strong> strength={savedTuning.loraScale.toFixed(1)},
+            guidance={savedTuning.guidanceScale.toFixed(1)} · saved {new Date(savedTuning.setAt).toLocaleString()}
+            <button onClick={clearTuning} style={S.btnGhost}>clear</button>
+          </div>
+        )}
+
+        <label style={S.label}>sample tweet (drives the scene)</label>
+        <input
+          type="text"
+          value={sweepTweetText}
+          onChange={(e) => setSweepTweetText(e.target.value)}
+          disabled={sweepRunning}
+          style={S.input}
+        />
+        <label style={S.label}>pillar</label>
+        <select
+          value={sweepPillarId}
+          onChange={(e) => setSweepPillarId(e.target.value)}
+          disabled={sweepRunning}
+          style={S.select}
+        >
+          <option value="scene_vignettes">scene_vignettes</option>
+          <option value="pure_reactions">pure_reactions</option>
+          <option value="broken_observations">broken_observations</option>
+          <option value="everyday_chaos">everyday_chaos</option>
+          <option value="gm_grin">gm_grin</option>
+        </select>
+
+        {/* Step 1: strength sweep */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>step 1: strength sweep</div>
+          <button
+            onClick={runStrengthSweep}
+            disabled={sweepRunning || !sweepTweetText.trim()}
+            style={S.btnPrimary}
+          >
+            {sweepRunning && !strengthSweepResults ? "running 7 variants…" : "run strength sweep (7 images, ~$0.50)"}
+          </button>
+
+          {strengthSweepResults && (
+            <div style={S.sweepGrid}>
+              {strengthSweepResults.variants.map((v) => (
+                <div
+                  key={v.label}
+                  style={{
+                    ...S.sweepTile,
+                    ...(chosenStrength === v.loraScale ? S.sweepTileChosen : {}),
+                  }}
+                  onClick={() => v.ok && setChosenStrength(v.loraScale)}
+                >
+                  {v.ok && v.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={v.imageUrl} alt={v.label} style={S.sweepImg} />
+                  ) : (
+                    <div style={S.sweepError}>{v.error || "failed"}</div>
+                  )}
+                  <div style={S.sweepLabel}>{v.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Step 2: guidance sweep */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>step 2: guidance sweep</div>
+          <button
+            onClick={runGuidanceSweep}
+            disabled={sweepRunning || chosenStrength === null}
+            style={S.btnPrimary}
+          >
+            {sweepRunning && !guidanceSweepResults
+              ? "running 4 variants…"
+              : chosenStrength === null
+                ? "pick a strength winner first"
+                : `run guidance sweep at strength ${chosenStrength.toFixed(1)} (4 images, ~$0.30)`}
+          </button>
+
+          {guidanceSweepResults && (
+            <div style={S.sweepGrid}>
+              {guidanceSweepResults.variants.map((v) => (
+                <div
+                  key={v.label}
+                  style={{
+                    ...S.sweepTile,
+                    ...(chosenGuidance === v.guidanceScale ? S.sweepTileChosen : {}),
+                  }}
+                  onClick={() => v.ok && setChosenGuidance(v.guidanceScale)}
+                >
+                  {v.ok && v.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={v.imageUrl} alt={v.label} style={S.sweepImg} />
+                  ) : (
+                    <div style={S.sweepError}>{v.error || "failed"}</div>
+                  )}
+                  <div style={S.sweepLabel}>{v.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Step 3: lock */}
+        <div style={{ marginTop: 16 }}>
+          <button
+            onClick={lockTuning}
+            disabled={chosenStrength === null || chosenGuidance === null}
+            style={{
+              ...S.btnPrimary,
+              opacity: chosenStrength === null || chosenGuidance === null ? 0.5 : 1,
+            }}
+          >
+            lock these values: strength={chosenStrength?.toFixed(1) ?? "?"}, guidance={chosenGuidance?.toFixed(1) ?? "?"}
+          </button>
+        </div>
+      </div>
+
       {/* REGISTRY */}
       <div style={S.registrySection}>
         <div style={S.cardHeader}>
@@ -708,6 +983,47 @@ const S: Record<string, React.CSSProperties> = {
   link: { color: "#1a1a1a", textDecoration: "underline" },
   registrySection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
   uploadTrainedSection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
+  calibrationSection: { marginTop: 24, paddingTop: 16, borderTop: "2px dashed #1a1a1a" },
+  tuningStatus: {
+    background: "#fff8d5",
+    border: "1px solid #1a1a1a",
+    padding: "8px 12px",
+    marginBottom: 12,
+    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  sweepGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+    gap: 8,
+    marginTop: 8,
+  },
+  sweepTile: {
+    border: "2px solid #1a1a1a",
+    cursor: "pointer",
+    background: "#fff",
+    padding: 4,
+    transition: "transform 0.1s",
+  },
+  sweepTileChosen: {
+    borderColor: "#0070f3",
+    background: "#e6f0ff",
+    transform: "scale(1.02)",
+  },
+  sweepImg: { width: "100%", aspectRatio: "1/1", objectFit: "cover" as const, display: "block" },
+  sweepLabel: { fontSize: 11, fontFamily: "monospace", textAlign: "center" as const, marginTop: 4 },
+  sweepError: {
+    aspectRatio: "1/1",
+    background: "#ffe6e6",
+    color: "#a00",
+    fontSize: 10,
+    padding: 4,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   activeBanner: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: 10, background: "#e3f2d8", border: "2px solid #0a8c3a", marginBottom: 12, fontFamily: "monospace", fontSize: 11, gap: 8, flexWrap: "wrap" },
   empty: { fontStyle: "italic", color: "#888", padding: 12, textAlign: "center" },
   regList: { display: "flex", flexDirection: "column", gap: 8 },
