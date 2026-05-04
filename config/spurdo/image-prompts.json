@@ -1,18 +1,28 @@
 {
-  "genStack": "flux-photoreal",
+  "genStack": "sdxl-stylized",
   "stackConfig": {
+    "stack": "sdxl-stylized",
+    "inferenceEndpoint": "fal-ai/lora",
+    "defaultLoraScale": 1.0,
+    "numInferenceSteps": 30,
+    "guidanceScale": 7.0,
+    "qualityTags": "mspaint, ms paint style, abysmal quality, crude amateur drawing",
+    "negativeTags": "photo, photorealistic, 3d render, smooth shading, anime, vector art, polished, professional illustration, gradients",
+    "defaultStyleLoras": [
+      {
+        "url": "https://civitai.com/api/download/models/205749",
+        "scale": 0.9,
+        "label": "MS Paint Portraits (civitai 183354)",
+        "triggerWord": "mspaint"
+      }
+    ],
+    "stackChoiceComment": "ACTIVATED for Spurdo on May 2026. SDXL with stacked LoRAs (civitai MS Paint style + Replicate-trained Spurdo identity). Style LoRA URL is civitai's public download endpoint. Identity LoRA must be set active in /bot LoRA registry — paste the .tar URL from Replicate via 'import LoRA by URL' panel. fal-ai/lora endpoint accepts both .safetensors and .tar from Replicate (auto-extracts)."
+  },
+  "fluxStackConfigArchived": {
     "stack": "flux-photoreal",
     "inferenceEndpoint": "fal-ai/flux-lora",
     "trainingEndpoint": "fal-ai/flux-lora-fast-training",
-    "defaultLoraScale": 1.0,
-    "numInferenceSteps": 28,
-    "guidanceScale": 3.5,
-    "stackChoiceComment": "REVERTED to flux-photoreal because Fal does not have an SDXL LoRA training endpoint (only inference). The earlier sdxl-stylized config pointed at fal-ai/fast-sdxl-lora-training which doesn't exist — training submissions returned 'Not Found'. Bank stays as the on-canon image source for Spurdo regardless. Generation via FLUX produces polished cartoon output (off-canon) but at least training works. To eventually use SDXL stack: source a Spurdo identity LoRA from an external SDXL trainer (Replicate, civitai trainer, etc.) and add the URL via a future BYO-LoRA-URL flow."
-  },
-  "sdxlStackConfigArchived": {
-    "stack": "sdxl-stylized",
-    "inferenceEndpoint": "fal-ai/lora",
-    "comment": "Saved here for when SDXL training story is sorted (external trainers + BYO URL). Inference endpoint fal-ai/lora is a real working Fal endpoint that supports SDXL with stacked LoRAs. The defaultStyleLoras would re-attach: huggingface.co/victor/MSpaint/SDXL_MSPaint_Portrait.safetensors (MSPaint trigger word, scale 0.9). Quality tags: score_9, score_8_up, score_7_up. Negative tags include 'photo, photorealistic, 3d render, smooth shading, anime, vector'. Guidance 7.0, steps 30."
+    "comment": "Archived. FLUX produces polished cartoons even with style LoRAs — wrong base for MS Paint. Kept for reference; switch back if SDXL doesn't work out."
   },
   "allowedProviders": ["bank", "custom", "fal"],
   "allowedProvidersComment": "Bank stays as the on-canon source. Custom upload for one-offs. Fal now routes through flux-photoreal (training works, output is cartoon-polish — fine because bank covers actual posts).",
