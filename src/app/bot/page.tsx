@@ -122,6 +122,7 @@ export default function BotDashboard() {
   // Activity + server log state (M3)
   const [activity, setActivity] = useState<ActivityData | null>(null);
   const [serverEvents, setServerEvents] = useState<ServerEvent[]>([]);
+  const [expandedEventIdx, setExpandedEventIdx] = useState<number | null>(null);
 
   const addLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -798,13 +799,32 @@ export default function BotDashboard() {
             {serverEvents.length === 0 ? (
               <div style={S.logEmpty}>no events yet</div>
             ) : (
-              serverEvents.map((e, i) => (
-                <div key={i} style={{ ...S.logEntry, color: typeColor(e.type === "post" ? "success" : e.type === "skip" ? "info" : e.type === "cron" ? "info" : (e.type as LogEntry["type"])) }}>
-                  <span style={S.logTime}>{new Date(e.ts).toLocaleTimeString("en-US", { hour12: false })}</span>
-                  <span style={S.eventTypeBadge}>{e.type}</span>
-                  {e.msg}
-                </div>
-              ))
+              serverEvents.map((e, i) => {
+                const hasMeta = e.meta && Object.keys(e.meta).length > 0;
+                const isExpanded = expandedEventIdx === i;
+                return (
+                  <div key={i}>
+                    <div
+                      style={{
+                        ...S.logEntry,
+                        color: typeColor(e.type === "post" ? "success" : e.type === "skip" ? "info" : e.type === "cron" ? "info" : (e.type as LogEntry["type"])),
+                        cursor: hasMeta ? "pointer" : "default",
+                      }}
+                      onClick={() => hasMeta && setExpandedEventIdx(isExpanded ? null : i)}
+                    >
+                      <span style={S.logTime}>{new Date(e.ts).toLocaleTimeString("en-US", { hour12: false })}</span>
+                      <span style={S.eventTypeBadge}>{e.type}</span>
+                      {e.msg}
+                      {hasMeta && <span style={{ marginLeft: 6, opacity: 0.5 }}>{isExpanded ? "▾" : "▸"}</span>}
+                    </div>
+                    {isExpanded && hasMeta && (
+                      <pre style={{ background: "#fff", border: "1px solid #1a1a1a", padding: 8, fontSize: 11, fontFamily: "monospace", overflow: "auto", margin: "2px 0 6px 24px" }}>
+                        {JSON.stringify(e.meta, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </section>
