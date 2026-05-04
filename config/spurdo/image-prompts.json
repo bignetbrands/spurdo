@@ -19,45 +19,57 @@
   "model": "gpt-image-1",
   "size": "1024x1024",
   "quality": "medium",
-  "lockedPromptTemplate": "spurdo spärde meme drawn in early internet MS Paint style. PORTRAIT FRAMING — head and shoulders only, head fills most of the frame, NO full body, NO legs, NO torso below shoulders, NO floating limbs. Brown rounded bean-shaped head with two soft humps on top and a V-crease between them, wavy horizontal forehead wrinkle lines, tiny solid black oval dot eyes with NO white highlights, cream/tan walrus-mustache muzzle made of two oval lobes, small black oval nose centered between the muzzle lobes, big pink open smile below the nose. Thick uneven black outlines, wobbly hand-drawn edges, no clean vector curves, looks slightly messy and amateur like it was drawn fast with a mouse in 2008. FLAT solid colors only — NO gradients, NO realistic lighting, NO shading. Scene context: [SCENE]. Show the scene in the background or surrounding the character but keep the spurdo head clearly the focus. Low-resolution screenshot-like feel. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cell-shaded, NOT modern digital art. NO text, NO logos, NO watermarks, NO floating disconnected body parts.",
+  "lockedPromptTemplate": "spurdo spärde meme drawn in early internet MS Paint style, doing the action described. The CHARACTER is the focus and the ACTION is clear. SHOW SPURDO'S WHOLE BODY when the scene calls for it (walking, sitting, holding things, etc) — full-body shots are required for action scenes. Brown rounded bean-shaped head with two soft humps on top and a V-crease between them, wavy horizontal forehead wrinkle lines, tiny solid black oval dot eyes with NO white highlights, cream/tan walrus-mustache muzzle made of two oval lobes, small black oval nose centered between the muzzle lobes, big pink open smile below the nose. Body is short stocky bear shape, brown all over, simple stubby arms and legs, paws can hold objects when needed. Thick uneven black outlines, wobbly hand-drawn edges, no clean vector curves, looks slightly messy and amateur like it was drawn fast with a mouse in 2008. FLAT solid colors only — NO gradients, NO realistic lighting, NO shading. Scene: [SCENE]. The scene should be clearly readable — show props, environment, and what spurdo is doing. Low-resolution screenshot-like feel. NOT polished, NOT vector, NOT 3D, NOT anime, NOT photorealistic, NOT cell-shaded, NOT modern digital art. NO text, NO logos, NO watermarks.",
   "lockedPromptTemplateTags": "mspaint, brown bear character, simple drawing, MS Paint style, amateur drawing, wobbly lines, flat colors, cream muzzle, tiny black dot eyes, pink open smile, thick black outlines, [SCENE], low quality on purpose, 2008 internet art, screenshot-like",
   "scenesByPillar": {
     "pure_reactions": [
-      "a flat plain off-white background with no scene, just spurdo centered as a portrait",
+      "a flat plain off-white background with no scene, just spurdo head centered as a portrait",
       "a flat 4chan-green colored background with no scene at all",
-      "a plain white background, just spurdo small in the center"
+      "a plain white background, just spurdo head close-up"
     ],
     "scene_vignettes": [
-      "a candlelit Finnish sauna interior with wooden walls and steam rising",
-      "a snowy Finnish forest at dusk with dark pine trees and low light",
-      "a fluorescent-lit Finnish supermarket aisle photo with linoleum floor and shelves of unlabeled products",
-      "a green grassy field with a Koskenkorva vodka bottle next to him",
-      "a kitchen counter with a plate of black salmiakki licorice candy",
-      "a wooden Finnish mökki cabin interior at night with a single oil lamp on a table",
-      "a winter scene with snow falling and a frozen lake behind him",
-      "a small rowboat on a still lake at midsummer with the sun barely below the horizon"
+      "spurdo standing in a grocery store aisle holding a basket, fluorescent lights, shelves of products in the background",
+      "spurdo sitting at a desk in front of a computer with a candlestick chart on the screen, plain office background",
+      "spurdo walking down a city sidewalk with parked cars and a brick building behind him",
+      "spurdo standing on a subway platform waiting, train tracks visible behind him",
+      "spurdo sitting on a couch holding a TV remote, plain living room background",
+      "spurdo standing in line at a coffee shop counter, espresso machine and chalkboard menu behind him",
+      "spurdo at the gym standing next to a treadmill, mirrored wall behind him",
+      "spurdo sitting at a kitchen table eating a slice of pizza, microwave visible in background",
+      "spurdo riding the bus, looking out the window, blurry city outside",
+      "spurdo standing at an ATM machine on a street corner, screen glowing",
+      "spurdo holding a smartphone close to his face while standing on a sidewalk, scrolling",
+      "spurdo walking a dog on a leash through a city park",
+      "spurdo standing in his kitchen pouring coffee from a pot into a mug",
+      "spurdo lying in bed under a blanket, phone glowing in his hand, dim room",
+      "spurdo standing at a self-checkout machine in a store, beeping items"
     ],
     "broken_observations": [
-      "a desk with a glowing CRT monitor showing a candlestick chart with squiggly red and green lines",
-      "a flat off-white background, spurdo holding a wooden sign that has nothing written on it",
-      "a beige room with a single chair, spurdo just standing there",
-      "a pixelated 2008-era webpage screenshot, spurdo pasted on top"
+      "spurdo standing in front of a giant glowing computer monitor showing a candlestick chart with squiggly red and green lines, looking confused",
+      "spurdo holding a smartphone, looking at it, shrugging shoulders",
+      "spurdo standing on a sidewalk watching a long line of people on phones walk past him",
+      "spurdo sitting at a desk staring at a wall of sticky notes with arrows and squiggles",
+      "spurdo at a busy intersection looking up at flashing billboards"
     ],
-    "finnish_absurdity": [
-      "midsummer at 3am, sun barely below horizon, dim grey sky, lakeside",
-      "a Finnish supermarket with shelves of energy drinks, harsh fluorescent light",
-      "a wooden sauna bench with a Koskenkorva bottle and a single salmiakki candy",
-      "a dark kitchen at 4pm in winter, only a window letting in grey light"
+    "everyday_chaos": [
+      "spurdo standing in a kitchen with a coffee mug spilled on the counter, brown puddle, looking down",
+      "spurdo holding a wifi router upside down trying to fix it, tangled cables",
+      "spurdo standing in the rain on a sidewalk holding a broken umbrella, wet",
+      "spurdo standing next to a bus that just drove off, exhaust cloud",
+      "spurdo sitting at a desk with smoke coming out of an old laptop",
+      "spurdo standing in the middle of a messy living room with packing boxes everywhere"
     ],
     "gm_grin": [
-      "a Finnish kitchen window with weak morning sun, snow outside",
-      "a forest path at sunrise with low golden light",
-      "spurdo waking up in a wooden bed in a mökki, dim morning light"
+      "spurdo sitting up in bed, blanket around him, weak morning sun through window, dim bedroom",
+      "spurdo standing at a kitchen window with a coffee mug in his paw, sunrise outside, plain kitchen",
+      "spurdo sitting at a kitchen table with cereal bowl, morning light, casual breakfast",
+      "spurdo standing on a balcony in a robe holding a coffee mug, city skyline at sunrise"
     ],
     "gn_grin": [
-      "a starry winter sky over a frozen Finnish lake, no aurora",
-      "a single oil lamp burning out in a wooden cabin",
-      "spurdo tucked into a wooden bed with a knit blanket, dim moonlight"
+      "spurdo lying in bed under a blanket with eyes half-closed, dim bedside lamp, cozy bedroom",
+      "spurdo brushing teeth at a bathroom sink, mirror behind him, bathroom tile",
+      "spurdo sitting on a couch in pajamas with a mug of tea, dark living room, only lamp light",
+      "spurdo standing at a window looking out at a dark street with streetlights, holding a mug"
     ]
   },
   "hardExclusions": [
