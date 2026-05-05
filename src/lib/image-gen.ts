@@ -8,7 +8,7 @@ import { generateImageScene } from "./claude";
 import { getActiveLoraUrl } from "./lora";
 import { assertImageBudget, recordImageSpend } from "./budget";
 import { retryWithBackoff } from "./retry";
-import { pickMemeForPillar } from "./meme-bank";
+import { pickMemeForPillar, pickMemeForTweet } from "./meme-bank";
 import { resolveStyleLoras } from "./style-loras";
 import { getSdxlTuning } from "./sdxl-tuning";
 import type { PillarId, GenStack, StackConfig, StackedLora } from "@/types";
@@ -94,7 +94,12 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
   // ── BANK: free, no budget, no API ──
   if (requested === "bank") {
     const startTime = Date.now();
-    const meme = await pickMemeForPillar(opts.pillarId);
+    // If we have tweet text, use the AI matcher to pick a contextually
+    // relevant meme. Falls back internally to dedupe-random pick if no
+    // tags exist or the matcher fails.
+    const meme = opts.tweetText
+      ? await pickMemeForTweet(opts.tweetText, opts.pillarId)
+      : await pickMemeForPillar(opts.pillarId);
     if (!meme) {
       throw new Error(
         "meme bank is empty. upload memes at memedepot.com/d/spurdo (or set MEMEDEPOT_FALLBACK_IDS env), then click refresh in /bot."
@@ -103,7 +108,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
     return {
       imageUrl: meme.rawUrl,
       provider: "bank",
-      promptSent: `[bank] memedepot:${meme.id} (${meme.source}) · pillar=${opts.pillarId}`,
+      promptSent: `[bank] memedepot:${meme.id} (${meme.source}) · pillar=${opts.pillarId}${opts.tweetText ? " · smart-match" : ""}`,
       elapsedMs: Date.now() - startTime,
     };
   }

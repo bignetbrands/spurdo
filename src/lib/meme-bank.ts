@@ -27,6 +27,17 @@ export interface MemeEntry {
   id: string; // memedepot/cloudflare image ID
   rawUrl: string; // CDN URL ready to attach to a tweet
   source: "scraped" | "fallback";
+  /**
+   * AI-generated tags describing the meme. Set by /api/admin/bank/tag
+   * which runs Claude Vision over each meme. Used by smart-match
+   * picker to pair tweets with contextually-relevant memes.
+   *
+   * Examples: ["arguing", "two-spurdos", "speech-text", "confrontation"]
+   *           ["sitting", "alone", "thoughtful", "indoors"]
+   */
+  tags?: string[];
+  /** Short caption from the AI describing the meme (for matcher context) */
+  caption?: string;
 }
 
 export interface BankManifest {
@@ -285,6 +296,41 @@ export async function refreshBank(): Promise<BankManifest> {
 // "rest" for ~2.5 days before being eligible again. Tunable.
 const RECENT_PICKS_BUFFER = 12;
 
+/**
+ * Per-meme tag storage. Survives bank refreshes (tags are keyed by
+ * meme ID, not by manifest). When the scraper finds a new meme it
+ * starts un-tagged; when an old meme drops out of memedepot, its
+ * tags become orphaned (cleaned up lazily).
+ */
+const TAGS_KEY = () => kvKey("bank:tags");
+
+export interface MemeTagRecord {
+  tags: string[];
+  caption: string;
+  taggedAt: string;
+}
+
+export async function getAllMemeTags(): Promise<Record<string, MemeTagRecord>> {
+  try {
+    const raw = await r().get<Record<string, MemeTagRecord>>(TAGS_KEY());
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function setMemeTagRecord(memeId: string, record: MemeTagRecord): Promise<void> {
+  const all = await getAllMemeTags();
+  all[memeId] = record;
+  await r().set(TAGS_KEY(), all);
+}
+
+export async function getUntaggedMemes(): Promise<MemeEntry[]> {
+  const m = await getManifest();
+  const tags = await getAllMemeTags();
+  return m.entries.filter((e) => !tags[e.id]);
+}
+
 async function getRecentPicks(): Promise<string[]> {
   try {
     const raw = await r().get<string[]>(kvKey("bank:recent-picks"));
@@ -342,4 +388,119 @@ export async function pickMemeForPillar(_pillarId: string): Promise<MemeEntry | 
 
 export async function pickRandomMeme(): Promise<MemeEntry | null> {
   return pickMemeForPillar("");
+}
+
+/**
+ * Smart-match: pick a meme contextually relevant to the given tweet
+ * text. Uses Claude Haiku to match tweet→meme based on stored tags
+ * and captions.
+ *
+ * Strategy:
+ *   1. Get all tagged memes from manifest + tag store
+ *   2. Filter out recent picks (same dedupe rule)
+ *   3. Hand the tweet text + a list of (id, caption, tags) to Haiku
+ *   4. Haiku returns the best-fit ID + a short reason
+ *   5. Fall back to random pick if Haiku fails or returns garbage
+ *
+ * Falls back to plain pickMemeForPillar() if no memes are tagged
+ * yet (so the system keeps working before the operator runs the
+ * tagger).
+ *
+ * The Anthropic call is one Haiku request — ~$0.001 per pick.
+ */
+export async function pickMemeForTweet(tweetText: string, pillarId?: string): Promise<MemeEntry | null> {
+  const m = await getManifest();
+  if (m.entries.length === 0) return null;
+
+  const tags = await getAllMemeTags();
+  const tagged = m.entries.filter((e) => tags[e.id]);
+
+  // No tags yet → fall back to plain dedupe-aware random pick
+  if (tagged.length === 0) {
+    return pickMemeForPillar(pillarId || "");
+  }
+
+  // Apply dedupe filter: skip recently-picked memes
+  const recent = await getRecentPicks();
+  const recentSet = new Set(recent);
+  let pool = tagged.filter((e) => !recentSet.has(e.id));
+  if (pool.length < 2) {
+    pool = tagged.filter((e) => e.id !== recent[0]);
+  }
+  if (pool.length === 0) pool = tagged;
+
+  // Build a compact options list for Haiku
+  const options = pool.map((e) => ({
+    id: e.id,
+    caption: tags[e.id]?.caption || "",
+    tags: tags[e.id]?.tags || [],
+  }));
+
+  let pickedId: string | null = null;
+  try {
+    pickedId = await matchTweetToMemeWithHaiku(tweetText, options);
+  } catch {
+    pickedId = null;
+  }
+
+  // Validate Haiku's pick is in our pool
+  let picked = pool.find((e) => e.id === pickedId);
+  if (!picked) {
+    // Haiku failed or returned an ID not in pool → random from pool
+    picked = pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  await pushRecentPick(picked.id);
+  return picked;
+}
+
+/**
+ * Use Claude Haiku to pick the best-fit meme from a list of options.
+ * Returns the meme ID, or null if Haiku doesn't return a clean pick.
+ *
+ * The prompt is intentionally simple: tweet + options, return ID.
+ * Haiku is fast (~500ms) and cheap (~$0.001/call).
+ */
+async function matchTweetToMemeWithHaiku(
+  tweetText: string,
+  options: Array<{ id: string; caption: string; tags: string[] }>
+): Promise<string | null> {
+  // Lazy-load to avoid import cycle (claude.ts imports from elsewhere)
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const anthropic = new Anthropic({ apiKey });
+
+  const optionsBlock = options
+    .map(
+      (o, i) =>
+        `${i + 1}. id=${o.id} | tags=[${o.tags.join(", ")}] | "${o.caption}"`
+    )
+    .join("\n");
+
+  const userMessage = `You are picking the most contextually relevant meme image to attach to a tweet.
+
+TWEET:
+"${tweetText}"
+
+MEME OPTIONS:
+${optionsBlock}
+
+Pick the option whose tags and caption best match the tweet's mood, scene, or theme. Avoid mismatches (e.g. don't pick an "arguing" meme for a "sleeping alone" tweet).
+
+Reply with ONLY the id of your chosen meme. Just the id, nothing else.`;
+
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 50,
+    messages: [{ role: "user", content: userMessage }],
+  });
+
+  const block = response.content[0];
+  if (!block || block.type !== "text") return null;
+  const reply = block.text.trim();
+
+  // Pull out the ID — be lenient about formatting
+  const match = reply.match(/[a-zA-Z0-9_-]{6,}/);
+  return match ? match[0] : null;
 }
