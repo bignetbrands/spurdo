@@ -122,6 +122,12 @@ export async function GET(request: Request) {
     }
 
     const isFamily = familyHandles.has(m.authorUsername.toLowerCase());
+    // 50/50 coin flip per reply: half get a contextually-matched bank meme,
+    // half are text-only. Smart-match picker uses the generated reply text
+    // to pick a relevant image — keeps replies feeling alive without
+    // being image-spammy. Operator can change this ratio in code.
+    const includeImage = Math.random() < 0.5;
+
     const result = await executeReply({
       parentTweetId: m.id,
       parentText: m.text,
@@ -129,7 +135,7 @@ export async function GET(request: Request) {
       isFamilyAccount: isFamily,
       hasParentImage: m.imageUrls.length > 0,
       hasParentVideo: m.hasVideo,
-      includeImage: false, // text replies by default; image replies are noisier and rarely add value
+      includeImage,
       trigger: "cron-mention",
     });
 

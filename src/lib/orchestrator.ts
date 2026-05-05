@@ -307,6 +307,9 @@ export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteRe
       const img = await generateImage({
         pillarId: "pure_reactions",
         provider: "bank",
+        // Pass the reply text so the bank picker uses Haiku smart-match
+        // to find a contextually relevant meme. Same dedupe rules apply.
+        tweetText: replyText,
       });
       imageUrl = img.imageUrl;
       imageProvider = img.provider;
