@@ -98,7 +98,7 @@ export async function generateReply(opts: {
     max_tokens: opts.maxTokens ?? 200,
     system: opts.systemPrompt,
     messages: [{ role: "user", content: opts.userPrompt }],
-    temperature: opts.temperature ?? 0.85, // slightly less random than tweets — replies need to track context
+    temperature: opts.temperature ?? 1.0, // higher temp than tweets — replies need more variety to avoid scripted patterns
   });
 
   const block = response.content[0];
