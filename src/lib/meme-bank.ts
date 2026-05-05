@@ -280,10 +280,64 @@ export async function refreshBank(): Promise<BankManifest> {
  * this is uniformly random. (We accept pillarId for API symmetry
  * with the GitHub-bank version and to enable future tagging.)
  */
+// How many recent picks to remember and avoid re-picking. With ~30 memes
+// in bank and 5 posts/day, a buffer of 12 means each meme has time to
+// "rest" for ~2.5 days before being eligible again. Tunable.
+const RECENT_PICKS_BUFFER = 12;
+
+async function getRecentPicks(): Promise<string[]> {
+  try {
+    const raw = await r().get<string[]>(kvKey("bank:recent-picks"));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+async function pushRecentPick(memeId: string): Promise<void> {
+  try {
+    const list = await getRecentPicks();
+    const filtered = list.filter((id) => id !== memeId);
+    filtered.unshift(memeId);
+    const trimmed = filtered.slice(0, RECENT_PICKS_BUFFER);
+    await r().set(kvKey("bank:recent-picks"), trimmed);
+  } catch {
+    // non-fatal — dedupe is a quality-of-life feature, not safety-critical
+  }
+}
+
+/**
+ * Pick a meme for a pillar, avoiding recently-used ones.
+ *
+ * Strategy: filter out the last N picks, then random-pick from what
+ * remains. If filtering would leave <2 memes (degenerate case — bank
+ * smaller than the buffer), fall back to picking from anything except
+ * the most recent single pick.
+ */
 export async function pickMemeForPillar(_pillarId: string): Promise<MemeEntry | null> {
   const m = await getManifest();
   if (m.entries.length === 0) return null;
-  return m.entries[Math.floor(Math.random() * m.entries.length)];
+
+  const recent = await getRecentPicks();
+  const recentSet = new Set(recent);
+
+  // Pool = everything not in recent buffer
+  let pool = m.entries.filter((e) => !recentSet.has(e.id));
+
+  // Degenerate: bank smaller than buffer — fall back to "anything but most recent 1"
+  if (pool.length < 2) {
+    const lastPicked = recent[0];
+    pool = m.entries.filter((e) => e.id !== lastPicked);
+  }
+
+  // Final fallback (bank has only 1 meme)
+  if (pool.length === 0) {
+    pool = m.entries;
+  }
+
+  const picked = pool[Math.floor(Math.random() * pool.length)];
+  await pushRecentPick(picked.id);
+  return picked;
 }
 
 export async function pickRandomMeme(): Promise<MemeEntry | null> {
