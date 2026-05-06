@@ -72,6 +72,7 @@
       "dailyTarget": { "min": 0, "max": 1 },
       "model": "sonnet",
       "generateImage": true,
+      "imageOverride": { "provider": "fal", "loraScale": 0.9 },
       "exampleTweets": [
         "gm. spurdo awake :DDD",
         "gm. evryting same as yesterday :D",
@@ -87,6 +88,7 @@
       "dailyTarget": { "min": 0, "max": 1 },
       "model": "sonnet",
       "generateImage": true,
+      "imageOverride": { "provider": "fal", "loraScale": 0.9 },
       "exampleTweets": [
         "spurdo sleep now. evryting still here tomorow :D",
         "moon up. spurdo down. ebin :DDD",

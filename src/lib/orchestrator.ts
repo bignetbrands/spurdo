@@ -37,6 +37,8 @@ export interface ExecuteTweetOptions {
   sceneOverride?: string;
   /** Override the image provider */
   imageProvider?: "fal" | "openai";
+  /** LoRA scale override (only meaningful for fal). Falls back to pillar config or KV tuning. */
+  loraScaleOverride?: number;
   /** Provided text to post directly (skip Claude). Used by post-now after edit. */
   textOverride?: string;
   /** Provided image URL (skip image gen). Used by post-now to use compose preview. */
@@ -108,11 +110,19 @@ export async function executeTweet(opts: ExecuteTweetOptions): Promise<ExecuteTw
 
   if (shouldImage && !imageUrl) {
     try {
+      // Provider precedence: explicit caller override > pillar.imageOverride > default
+      // (which falls through to image-gen.ts's bank default)
+      const effectiveProvider = opts.imageProvider ?? pillar.imageOverride?.provider;
+      const effectiveLoraScale =
+        opts.loraScaleOverride ??
+        (pillar.imageOverride?.provider === "fal" ? pillar.imageOverride.loraScale : undefined);
+
       const img = await generateImage({
         pillarId: opts.pillar,
         tweetText: text,
         sceneOverride: opts.sceneOverride,
-        provider: opts.imageProvider,
+        provider: effectiveProvider,
+        loraScale: effectiveLoraScale,
       });
       imageUrl = img.imageUrl;
       imageProvider = img.provider;

@@ -13,6 +13,17 @@ export interface PillarConfig {
   model: "sonnet" | "opus" | "haiku";
   generateImage: boolean;
   exampleTweets: string[];
+  /**
+   * Per-pillar image override. When set, the orchestrator uses this
+   * provider instead of the default (bank). Useful for posts that
+   * must always be generated fresh — e.g. gm/gn posts where a curated
+   * meme would feel stale, but a fresh fal-generated frame feels alive.
+   */
+  imageOverride?: {
+    provider: "fal" | "openai" | "bank";
+    /** LoRA scale override (only meaningful for fal). Default uses tuning. */
+    loraScale?: number;
+  };
 }
 
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "latenight";

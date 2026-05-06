@@ -80,6 +80,42 @@ export async function decideNext(): Promise<SchedulerDecision> {
     };
   }
 
+  // ── Gate 5b: per-pillar daily-target enforcement ──
+  // Some pillars are once-per-day (gm_grin, gn_grin). We track posts
+  // per pillar today to know which are exhausted.
+  const todayByPillar: Record<string, number> = {};
+  for (const t of today) {
+    todayByPillar[t.pillar] = (todayByPillar[t.pillar] || 0) + 1;
+  }
+
+  // ── Special priority slots: gm and gn ──
+  // gm_grin should fire ONCE per day in the morning window (before noon UTC),
+  // and gn_grin should fire ONCE per day at night (≥22:00 UTC). These get
+  // priority over the normal weighted random pick — if it's morning and
+  // we haven't gm'd yet, force gm. Same for gn at night.
+  const gmAlreadyToday = (todayByPillar["gm_grin"] || 0) >= 1;
+  const gnAlreadyToday = (todayByPillar["gn_grin"] || 0) >= 1;
+  const isMorningWindow = hourUTC < 12;
+  const isNightWindow = hourUTC >= 22;
+
+  if (isMorningWindow && !gmAlreadyToday && cfg.pillars.pillars["gm_grin"]) {
+    // Skip gap + probability gates for the priority gm slot — it's its own thing
+    return {
+      shouldPost: true,
+      pillar: "gm_grin",
+      reason: `priority slot: gm_grin (morning window, none today)`,
+      meta: { timeOfDay: tod, todayCount: today.length, todayTarget: schedule.dailyTweetTarget },
+    };
+  }
+  if (isNightWindow && !gnAlreadyToday && cfg.pillars.pillars["gn_grin"]) {
+    return {
+      shouldPost: true,
+      pillar: "gn_grin",
+      reason: `priority slot: gn_grin (night window, none today)`,
+      meta: { timeOfDay: tod, todayCount: today.length, todayTarget: schedule.dailyTweetTarget },
+    };
+  }
+
   // ── Gate 6: gap since last post ──
   const last = await getLastPostedAt();
   let minutesSinceLast = Infinity;
@@ -136,10 +172,21 @@ export async function decideNext(): Promise<SchedulerDecision> {
   }
 
   // ── Pick a pillar via weighted random ──
-  const weights = cfg.pillars.timeWeights[tod];
-  const pillar = pickWeighted(weights);
+  // Exclude pillars that are at their daily-max already, AND exclude
+  // gm_grin/gn_grin (those fire only via the priority slots above —
+  // never via probabilistic rotation, to enforce once-per-day).
+  const baseWeights = cfg.pillars.timeWeights[tod];
+  const filteredWeights: Record<string, number> = {};
+  for (const [name, w] of Object.entries(baseWeights)) {
+    if (name === "gm_grin" || name === "gn_grin") continue;
+    const pillarCfg = cfg.pillars.pillars[name];
+    const dailyMax = pillarCfg?.dailyTarget?.max;
+    if (typeof dailyMax === "number" && (todayByPillar[name] || 0) >= dailyMax) continue;
+    filteredWeights[name] = w;
+  }
+  const pillar = pickWeighted(filteredWeights);
   if (!pillar) {
-    return { shouldPost: false, reason: `no pillar weights configured for ${tod}` };
+    return { shouldPost: false, reason: `no eligible pillar for ${tod} (all at daily max)` };
   }
 
   return {
