@@ -408,7 +408,23 @@ export async function pickRandomMeme(): Promise<MemeEntry | null> {
  *
  * The Anthropic call is one Haiku request — ~$0.001 per pick.
  */
-export async function pickMemeForTweet(tweetText: string, pillarId?: string): Promise<MemeEntry | null> {
+export interface BankPickResult {
+  meme: MemeEntry;
+  /**
+   * How the pick was made. Useful for debugging mismatches.
+   *   - "smart": Haiku selected from the tagged pool
+   *   - "random-from-tagged": Haiku failed/returned garbage, fallback to random within tagged pool
+   *   - "random-untagged": no memes tagged at all, fallback to plain random
+   */
+  pickMode: "smart" | "random-from-tagged" | "random-untagged";
+  poolSize: number;
+  taggedCount: number;
+  /** Tags of the chosen meme (if any) — for debugging mismatches */
+  pickedTags?: string[];
+  pickedCaption?: string;
+}
+
+export async function pickMemeForTweet(tweetText: string, pillarId?: string): Promise<BankPickResult | null> {
   const m = await getManifest();
   if (m.entries.length === 0) return null;
 
@@ -417,7 +433,14 @@ export async function pickMemeForTweet(tweetText: string, pillarId?: string): Pr
 
   // No tags yet → fall back to plain dedupe-aware random pick
   if (tagged.length === 0) {
-    return pickMemeForPillar(pillarId || "");
+    const meme = await pickMemeForPillar(pillarId || "");
+    if (!meme) return null;
+    return {
+      meme,
+      pickMode: "random-untagged",
+      poolSize: m.entries.length,
+      taggedCount: 0,
+    };
   }
 
   // Apply dedupe filter: skip recently-picked memes
@@ -443,15 +466,27 @@ export async function pickMemeForTweet(tweetText: string, pillarId?: string): Pr
     pickedId = null;
   }
 
-  // Validate Haiku's pick is in our pool
+  // Haiku said no good match → return null so caller skips the image entirely
+  if (pickedId === "__NONE__") {
+    return null;
+  }
+
+  let pickMode: BankPickResult["pickMode"] = "smart";
   let picked = pool.find((e) => e.id === pickedId);
   if (!picked) {
-    // Haiku failed or returned an ID not in pool → random from pool
+    pickMode = "random-from-tagged";
     picked = pool[Math.floor(Math.random() * pool.length)];
   }
 
   await pushRecentPick(picked.id);
-  return picked;
+  return {
+    meme: picked,
+    pickMode,
+    poolSize: pool.length,
+    taggedCount: tagged.length,
+    pickedTags: tags[picked.id]?.tags,
+    pickedCaption: tags[picked.id]?.caption,
+  };
 }
 
 /**
@@ -478,7 +513,7 @@ async function matchTweetToMemeWithHaiku(
     )
     .join("\n");
 
-  const userMessage = `You are picking the most contextually relevant meme image to attach to a tweet.
+  const userMessage = `You are picking a meme image to attach to a tweet. The meme should feel CONTEXTUALLY RELEVANT — same vibe, scene, or theme. A wrong match looks worse than no image.
 
 TWEET:
 "${tweetText}"
@@ -486,9 +521,13 @@ TWEET:
 MEME OPTIONS:
 ${optionsBlock}
 
-Pick the option whose tags and caption best match the tweet's mood, scene, or theme. Avoid mismatches (e.g. don't pick an "arguing" meme for a "sleeping alone" tweet).
+Rules:
+- If one option is clearly relevant to the tweet's mood/scene/theme, return its id.
+- If NO option is a good match, return the literal word: NONE
+- Don't force a match. A "religious chanting" meme is wrong for a "gm sauna" tweet.
+- Avoid picking memes whose specific narrative (e.g. "two-spurdos arguing about jeeting") doesn't fit the tweet.
 
-Reply with ONLY the id of your chosen meme. Just the id, nothing else.`;
+Reply with ONLY the chosen id (or NONE). No explanation, no other text.`;
 
   const response = await anthropic.messages.create({
     model: "claude-haiku-4-5",
@@ -499,6 +538,9 @@ Reply with ONLY the id of your chosen meme. Just the id, nothing else.`;
   const block = response.content[0];
   if (!block || block.type !== "text") return null;
   const reply = block.text.trim();
+
+  // Haiku said no good match — caller should skip image entirely
+  if (/^NONE\b/i.test(reply)) return "__NONE__";
 
   // Pull out the ID — be lenient about formatting
   const match = reply.match(/[a-zA-Z0-9_-]{6,}/);

@@ -94,12 +94,23 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
   // ── BANK: free, no budget, no API ──
   if (requested === "bank") {
     const startTime = Date.now();
-    // If we have tweet text, use the AI matcher to pick a contextually
-    // relevant meme. Falls back internally to dedupe-random pick if no
-    // tags exist or the matcher fails.
-    const meme = opts.tweetText
-      ? await pickMemeForTweet(opts.tweetText, opts.pillarId)
-      : await pickMemeForPillar(opts.pillarId);
+    if (opts.tweetText) {
+      const pick = await pickMemeForTweet(opts.tweetText, opts.pillarId);
+      if (!pick) {
+        // Either bank empty OR Haiku judged no good match exists. Either
+        // way, throwing causes orchestrator to post text-only — exactly
+        // what we want when no relevant meme is available.
+        throw new Error("bank: no relevant meme for this tweet (smart-match abstained or bank empty)");
+      }
+      const tagDebug = pick.pickedTags ? ` tags=[${pick.pickedTags.join(",")}]` : " untagged";
+      return {
+        imageUrl: pick.meme.rawUrl,
+        provider: "bank",
+        promptSent: `[bank/${pick.pickMode}] memedepot:${pick.meme.id} (pool=${pick.poolSize}, tagged=${pick.taggedCount})${tagDebug} · "${pick.pickedCaption?.slice(0, 80) || ""}" · pillar=${opts.pillarId}`,
+        elapsedMs: Date.now() - startTime,
+      };
+    }
+    const meme = await pickMemeForPillar(opts.pillarId);
     if (!meme) {
       throw new Error(
         "meme bank is empty. upload memes at memedepot.com/d/spurdo (or set MEMEDEPOT_FALLBACK_IDS env), then click refresh in /bot."
@@ -108,7 +119,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
     return {
       imageUrl: meme.rawUrl,
       provider: "bank",
-      promptSent: `[bank] memedepot:${meme.id} (${meme.source}) · pillar=${opts.pillarId}${opts.tweetText ? " · smart-match" : ""}`,
+      promptSent: `[bank/random-no-text] memedepot:${meme.id} (${meme.source}) · pillar=${opts.pillarId}`,
       elapsedMs: Date.now() - startTime,
     };
   }
