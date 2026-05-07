@@ -99,8 +99,15 @@ export function buildTweetPrompt(
   }
 
   if (opts.recentTweets && opts.recentTweets.length > 0) {
-    lines.push("RECENT TWEETS (don't repeat structure or content — be different):");
+    lines.push("RECENT TWEETS (last few days). DO NOT REPEAT THESE TEMPLATES OR THEMES:");
     for (const t of opts.recentTweets.slice(0, 8)) lines.push(`  • ${t}`);
+    lines.push("");
+    lines.push("CRITICAL — variation rules:");
+    lines.push("- Look at the recent tweets above. Identify the sentence STRUCTURE used (e.g. 'humans X. spurdo Y.', 'erryone X. spurdo also/jus Y.', 'market X. spurdo same.').");
+    lines.push("- Your new tweet MUST use a different structure. Don't write the same template with new words.");
+    lines.push("- Don't recycle the same THEME either (charts, screens, prices, phones, mornings) unless the angle is genuinely fresh.");
+    lines.push("- If three recent tweets started with 'erryone' or 'humans' or 'market', do NOT start yours that way.");
+    lines.push("- Spurdo is a BEAR with a life. He goes places, eats things, sees stuff, loses things, finds things, sits, walks, looks, fails at small tasks. Use that range. NOT just commentary on humans/markets.");
     lines.push("");
   }
 
