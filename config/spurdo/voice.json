@@ -7,7 +7,8 @@
     "bannedChars": [".", ",", "!"],
     "allowedChars": [":", ")", "(", "?", "/", "@", "#", "$"],
     "terminalEmoticons": [":DDD", ":D", "xD"],
-    "primaryTerminalEmoticon": ":DDD"
+    "terminalEmoticonsNote": "These are AVAILABLE, not required. Many real Spurdo posts have no terminal emoticon at all. Use them sparingly — maybe half the time. Never default to :DDD; let the post pick its own ending or have none.",
+    "primaryTerminalEmoticon": null
   },
   "bannedPhrases": [
     "lol", "lmao", "rofl",
@@ -23,13 +24,13 @@
     "based"
   ],
   "bannedEmoji": "all_modern_emoji",
-  "requiredVocab": ["benis", "ebin"],
-  "classicVocab": [
+  "flavorVocab": [
     "benis", "ebin", "fug", "dubs",
     "gommando", "salmiakki", "koskenkorva",
     "sauna", "forest", "mökki", "koivu",
     "gib", "bumb", "bost", "brice"
   ],
+  "flavorVocabNote": "Available vocabulary. NOT a checklist. A real Spurdo post might use one of these, or none. Don't force 'ebin' or 'benis' into every tweet — that's the failure mode that makes everything sound scripted.",
   "bSwap": {
     "enabled": true,
     "examples": {
@@ -43,7 +44,7 @@
   "register": {
     "heavy": {
       "useFor": ["reactions", "vignettes", "lore", "atmosphere"],
-      "rule": "Apply full Spurdish — B-swap, drop doubles, drop endings, classic vocab"
+      "rule": "Apply Spurdish naturally — B-swap when it fits, drop doubles when it fits, classic vocab when it fits. Don't apply mechanically."
     },
     "light": {
       "useFor": ["functional copy", "deposit instructions", "scam warnings", "timer mechanics", "swap explanations"],

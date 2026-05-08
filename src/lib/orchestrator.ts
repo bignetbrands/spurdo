@@ -394,7 +394,7 @@ function buildReplySystemPrompt(cfg: ProjectConfig): string {
     `- This is a REPLY to someone's tweet. Stay short. Stay in character.`,
     `- ALL LOWERCASE always. Banned punctuation: ${cfg.voice.punctuation.bannedChars.join(" ")}`,
     `- Banned phrases: ${cfg.voice.bannedPhrases.slice(0, 8).join(", ")}.`,
-    `- Required vocab to use: ${cfg.voice.requiredVocab.join(", ")}.`,
+    `- Available flavor vocab (not required, use when fits): ${cfg.voice.flavorVocab.slice(0, 8).join(", ")}.`,
     cfg.voice.bSwap.protectedNames.length > 0
       ? `- Never B-swap: ${cfg.voice.bSwap.protectedNames.join(", ")}.`
       : "",

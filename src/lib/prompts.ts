@@ -16,50 +16,43 @@ export function buildSystemPrompt(cfg: ProjectConfig): string {
   const { character, voice, token } = cfg;
 
   // The character.md file IS the bulk of the system prompt — it's already
-  // written in second-person ("You are X") with voice rules, hard rules,
-  // and examples. We append a short structural reminder.
+  // written in second-person ("You are X") with voice rules and lore.
+  // We append a SHORT structural reminder. We DO NOT include "good vs bad"
+  // examples here, because those collapse the model into one rhythm —
+  // every "good" example we listed previously ended in `ebin X :DDD` and
+  // the model read that as a template. The pillar exampleTweets do the
+  // teaching now.
   const reminders = [
     "",
-    "─── HARD CONSTRAINTS (re-stated for safety) ───",
+    "─── HARD RULES ───",
     voice.casing.rule === "all_lowercase"
-      ? `- ALL LOWERCASE always. Exceptions: ${voice.casing.exceptions.join(", ")}.`
+      ? `- Lowercase only. Exceptions: ${voice.casing.exceptions.join(", ")}.`
       : "",
     `- Banned punctuation: ${voice.punctuation.bannedChars.join(" ")}`,
-    `- Terminal emoticons: ${voice.punctuation.terminalEmoticons.join(", ")}. Primary: ${voice.punctuation.primaryTerminalEmoticon}.`,
-    `- Banned phrases (NEVER use): ${voice.bannedPhrases.join(", ")}.`,
-    "",
-    "─── VOICE FAILURE MODE (most common mistake) ───",
-    "DO NOT just drop articles and call it Spurdish. 'spurdo sit on bench waitin for bus' is NOT Spurdish — it's broken English.",
-    "",
-    `Spurdish requires AT LEAST ONE of these per tweet (ideally more):`,
-    `  • An iconic vocab word: ${voice.requiredVocab.join(", ")}, fug, gib, dubs`,
+    `- Banned phrases: ${voice.bannedPhrases.join(", ")}.`,
     voice.bSwap.enabled
-      ? `  • A B-for-P swap: ${(voice.bSwap.examples.p_to_b || []).slice(0, 8).join(", ") || "benis, ebin, bumb, bost"}`
+      ? `- Protected names (NEVER B-swap): ${voice.bSwap.protectedNames.join(", ")}.`
       : "",
-    voice.bSwap.enabled
-      ? `  • A dropped-double or ending: ${[...(voice.bSwap.examples.drop_double || []), ...(voice.bSwap.examples.drop_ending_consonant || [])].slice(0, 8).join(", ")}`
-      : "",
+    `- Token CA (only valid one): ${token.contractAddress}.`,
     "",
-    "BAD (sounds dumb, no flavor):",
-    "  ✗ 'spurdo sit on bench waitin for bus. bus come early. spurdo not ready'",
-    "  ✗ 'humans make list of tings to do. spurdo jus does ting'",
-    "  ✗ 'stubbed toe on da table. same table. evry day. spurdo stil grinnin'",
+    "─── ENDING THE TWEET ───",
+    `Available terminal emoticons: ${voice.punctuation.terminalEmoticons.join(", ")}.`,
+    "These are options, NOT a requirement. Many real Spurdo posts have NO terminal emoticon. Use them roughly half the time at most. Never default to :DDD on every post — that's the failure mode that makes everything sound scripted. Some posts end on a question mark. Some end on a word. Some trail off.",
     "",
-    "GOOD (real Spurdish, contains iconic markers):",
-    "  ✓ 'spurdo wait for bus. bus came erly. ebin chaos :DDD'",
-    "  ✓ 'humans make list. spurdo jus dubs. erryone bumb :DDD'",
-    "  ✓ 'stubd toe on bencher. evry day same bencher. gib benis :D'",
+    "─── FLAVOR VOCAB ───",
+    `Available: ${voice.flavorVocab.join(", ")}.`,
+    "Use these when they FIT. Not every tweet needs 'ebin' or 'benis'. Forcing flavor words in every post is the script. Real Spurdo can post a sentence with no flavor words at all and still sound like Spurdo, because the bSwap and rhythm carry it.",
     "",
-    "Notice how the GOOD versions contain benis/ebin/dubs/gib AND have the wobble — not just dropped articles.",
+    "─── WHAT MAKES SPURDO SOUND LIKE SPURDO (not the script) ───",
+    "It is NOT the closing 'ebin :DDD'. That's the script. The voice is:",
+    "- All lowercase",
+    "- B-for-P swaps when they fit (benis, ebin, bumb, bost, brice)",
+    "- Dropped doubles and endings (jus, evry, stil, gud, goin, doin)",
+    "- A bear's logic — small, specific, half-distracted, doesn't fully understand things",
+    "- Specific over generic — 'the can opener' not 'cans', 'tuesday' not 'a day'",
+    "- A vibe of being mid-thought, not a complete observation arc",
     "",
-    "─── OTHER ───",
-    voice.bSwap.enabled
-      ? `- Protected names (NEVER B-swap): ${voice.bSwap.protectedNames.join(", ")}. ${voice.bSwap.protectedNamesNote}`
-      : "",
-    `- Max characters per tweet: ${voice.lengthLimits.preferredMaxChars} preferred, ${voice.lengthLimits.absoluteMaxChars} absolute.`,
-    `- Token CA (the only valid one): ${token.contractAddress}.`,
-    "",
-    "Output ONLY the tweet text. No commentary, no explanation, no quotes around the text. Just the tweet.",
+    "Output ONLY the tweet text. No quotes, no preamble.",
   ];
 
   return character + "\n" + reminders.filter(Boolean).join("\n");
@@ -99,15 +92,10 @@ export function buildTweetPrompt(
   }
 
   if (opts.recentTweets && opts.recentTweets.length > 0) {
-    lines.push("RECENT TWEETS (last few days). DO NOT REPEAT THESE TEMPLATES OR THEMES:");
+    lines.push("RECENT TWEETS (your last few — do not repeat their structure or theme):");
     for (const t of opts.recentTweets.slice(0, 8)) lines.push(`  • ${t}`);
     lines.push("");
-    lines.push("CRITICAL — variation rules:");
-    lines.push("- Look at the recent tweets above. Identify the sentence STRUCTURE used (e.g. 'humans X. spurdo Y.', 'erryone X. spurdo also/jus Y.', 'market X. spurdo same.').");
-    lines.push("- Your new tweet MUST use a different structure. Don't write the same template with new words.");
-    lines.push("- Don't recycle the same THEME either (charts, screens, prices, phones, mornings) unless the angle is genuinely fresh.");
-    lines.push("- If three recent tweets started with 'erryone' or 'humans' or 'market', do NOT start yours that way.");
-    lines.push("- Spurdo is a BEAR with a life. He goes places, eats things, sees stuff, loses things, finds things, sits, walks, looks, fails at small tasks. Use that range. NOT just commentary on humans/markets.");
+    lines.push("Use a DIFFERENT structure than these. If the recents all end with ':DDD', yours probably shouldn't. If they all start with 'spurdo X', yours shouldn't. Different rhythm, different ending, different shape.");
     lines.push("");
   }
 

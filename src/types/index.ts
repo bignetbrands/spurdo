@@ -51,12 +51,23 @@ export interface VoiceConfig {
     bannedChars: string[];
     allowedChars: string[];
     terminalEmoticons: string[];
-    primaryTerminalEmoticon: string;
+    /**
+     * Used to be a "default emoticon" the model would slap on every tweet.
+     * Now nullable — when null, no default; the model picks an ending or
+     * none at all.
+     */
+    primaryTerminalEmoticon: string | null;
+    terminalEmoticonsNote?: string;
   };
   bannedPhrases: string[];
   bannedEmoji: string;
-  requiredVocab: string[];
-  classicVocab: string[];
+  /**
+   * Available flavor vocab. Renamed from "classicVocab" / "requiredVocab"
+   * to make explicit that these are AVAILABLE not REQUIRED. The model
+   * should use them when they fit, not in every tweet.
+   */
+  flavorVocab: string[];
+  flavorVocabNote?: string;
   bSwap: {
     enabled: boolean;
     examples: Record<string, string[]>;
