@@ -89,15 +89,44 @@ export async function generateReply(opts: {
   model?: "haiku" | "sonnet" | "opus";
   maxTokens?: number;
   temperature?: number;
+  /**
+   * URLs of images to attach as vision input. Used for replies to tweets
+   * with images so the model can actually see what's being shown — fixes
+   * cases where the joke is in the image (e.g. parody pic) and a text-
+   * only reply lands as confused fluff.
+   *
+   * Costs ~5x more tokens per image. Only pass when actually needed.
+   */
+  imageUrls?: string[];
 }): Promise<{ text: string; model: string; tokensUsed: number }> {
   await assertTokenBudget();
 
   const model = MODELS[opts.model || "haiku"];
+
+  // Build user content. If image URLs are present, send a multimodal
+  // content array with the image first, then the text prompt. Anthropic's
+  // SDK accepts URL-source images directly — no base64 fetch needed.
+  type ContentBlock =
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "url"; url: string } };
+
+  let userContent: string | ContentBlock[];
+  if (opts.imageUrls && opts.imageUrls.length > 0) {
+    const blocks: ContentBlock[] = opts.imageUrls.map((url) => ({
+      type: "image" as const,
+      source: { type: "url" as const, url },
+    }));
+    blocks.push({ type: "text" as const, text: opts.userPrompt });
+    userContent = blocks;
+  } else {
+    userContent = opts.userPrompt;
+  }
+
   const response = await getClient().messages.create({
     model,
     max_tokens: opts.maxTokens ?? 200,
     system: opts.systemPrompt,
-    messages: [{ role: "user", content: opts.userPrompt }],
+    messages: [{ role: "user", content: userContent as never }],
     temperature: opts.temperature ?? 1.0, // higher temp than tweets — replies need more variety to avoid scripted patterns
   });
 

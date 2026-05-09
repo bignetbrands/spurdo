@@ -225,6 +225,13 @@ export interface ExecuteReplyOptions {
   isFamilyAccount?: boolean;
   hasParentImage?: boolean;
   hasParentVideo?: boolean;
+  /**
+   * URLs of images attached to the parent tweet. When present, the FIRST
+   * image (max one to keep the call cheap) is fed to Haiku so the reply
+   * can actually see the joke instead of replying blind. Set this from
+   * the cron's m.imageUrls.
+   */
+  parentImageUrls?: string[];
   /** If true, attach a random bank meme (default: false — replies are usually text-only) */
   includeImage?: boolean;
   /** Trigger label for the event log */
@@ -277,6 +284,10 @@ export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteRe
       userPrompt: replyPrompt,
       model: "haiku", // fast + cheap for replies; pillars use sonnet
       maxTokens: 200,
+      // Feed the first attached image to Haiku Vision so spurdo can
+      // actually see the joke. Only the first — multiple images blow
+      // the cost / latency budget on every reply.
+      imageUrls: opts.parentImageUrls?.slice(0, 1),
     });
     replyText = gen.text.trim();
   } catch (err) {

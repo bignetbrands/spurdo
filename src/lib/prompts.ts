@@ -222,7 +222,7 @@ export function buildReplyPrompt(cfg: ProjectConfig, opts: BuildReplyPromptOpts)
   lines.push("");
   lines.push(`Their username: @${authorUsername}${isFamilyAccount ? " (FAMILY ACCOUNT — slightly warmer tone, treat as a known friend)" : ""}`);
   lines.push(`Their tweet text: """${parentText}"""`);
-  if (hasParentImage) lines.push(`(They attached an image. You can react like you saw it but don't describe specific details — you can't actually see images well.)`);
+  if (hasParentImage) lines.push(`(They attached an image — IT IS ATTACHED TO THIS MESSAGE. Look at it. The joke or context is often in the image, not the text. Read what's in it before replying. If it's a meme aimed at spurdo or his ecosystem, react to the actual content of the image.)`);
   if (hasParentVideo) lines.push(`(They attached a video. You CAN'T watch videos — react to the text only, or note that you'll watch later.)`);
   lines.push("");
 

@@ -135,6 +135,9 @@ export async function GET(request: Request) {
       isFamilyAccount: isFamily,
       hasParentImage: m.imageUrls.length > 0,
       hasParentVideo: m.hasVideo,
+      // Pass the actual image URLs so Haiku can see them. Without this
+      // the model is replying blind when the joke is in the image.
+      parentImageUrls: m.imageUrls,
       includeImage,
       trigger: "cron-mention",
     });
