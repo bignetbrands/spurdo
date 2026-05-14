@@ -1228,81 +1228,212 @@
   wireCopyButton('depositAddrCopy', 'depositAddr');
 
   /* === SBURDISH TRANSLATOR ================================== */
-  // vocab dict — applied as whole words BEFORE the b-for-p swap
-  // some entries already contain b's (e.g. debosit) so the swap doesn't re-touch them
+  // vocab dict — applied as whole-word matches BEFORE the b-for-p swap.
+  // entries already contain b's where appropriate (e.g. debosit, bool) so the
+  // universal swap stage doesn't re-touch them.
+  // organized: user's canonical list first, bible-consistent extensions below.
   const SBUR_VOCAB = {
-    // articles + pronouns + common
-    'the':'da', 'this':'dis', 'that':'dat', 'these':'dese', 'those':'dose',
-    'they':'dey', 'them':'dem', 'their':'dere', 'theyre':'dey r', "they're":'dey r',
-    'with':'wit', 'you':'u', 'your':'ur', 'youre':'ur', "you're":'ur', 'yours':'urs',
-    'are':'r', 'is':'iz', 'was':'wuz', 'were':'wer',
-    'and':'n', 'or':'or',
-    // numbers/abbrevs
-    'before':'b4', 'for':'4', 'to':'2', 'too':'2', 'two':'2', 'see':'c', 'why':'y',
-    // -ing endings (dropped g)
-    'going':'goin', 'doing':'doin', 'making':'makin', 'getting':'gettin',
-    'coming':'comin', 'pumping':'bumbin', 'dumping':'dumbin', 'shilling':'shillin',
-    'talking':'talkin', 'sayin':'sayin', 'saying':'sayin', 'thinking':'thinkin',
-    'looking':'lookin', 'feeling':'feelin', 'waiting':'waitin', 'holding':'holdin',
-    'buying':'buyin', 'selling':'sellin', 'trading':'tradin', 'farming':'farmin',
-    'depositing':'debositin', 'locking':'lockin', 'unlocking':'unlockin',
-    // -ust drop
-    'just':'jus', 'must':'mus', 'trust':'trus',
-    // crypto vocab — heavy flavor
-    'deposit':'debosit', 'price':'brice', 'pump':'bumb', 'dump':'dumb',
-    'pool':'bool', 'post':'bost', 'people':'beoble', 'penis':'benis',
-    // good/great → ebin
-    'awesome':'ebin', 'amazing':'ebin', 'great':'ebin', 'epic':'ebin',
-    'wonderful':'ebin', 'fantastic':'ebin', 'excellent':'ebin', 'incredible':'ebin',
-    'beautiful':'ebin', 'perfect':'ebin', 'best':'ebin', 'good':'gud',
-    // doubles dropping
-    'everyone':'erryone', 'everybody':'erryone', 'every':'evry',
-    'what':'wat', 'really':'rly', 'gonna':'gon', 'wanna':'wan',
-    // greetings — classic sburdo
-    'hello':'gib benis', 'hi':'gib benis', 'hey':'gib benis',
-    'gm':'gib benis', 'gn':'gib benis sleeb',
-    // modern crypto slang — replace w/ classic equivalents
-    'ser':'brudder', 'fren':'brudder', 'bro':'brudder', 'brother':'brudder', 'bestie':'brudder',
-    'wagmi':'we gon make it brudder', 'ngmi':'ngmi brudder',
-    'lfg':'gib benis', 'lol':'kek', 'haha':'kek', 'lmao':'kek', 'rofl':'kek',
-    'kek':'kek', 'omg':'omg', 'wtf':'wat da fugg',
-    // misc
-    'love':'luv', 'cool':'ebin', 'nice':'ebin', 'thanks':'tanks', 'thank':'tank',
-    'something':'sumtin', 'thing':'ting', 'things':'tings',
-    'because':'bcuz', 'about':'about', 'around':'round',
-    'i':'i', 'im':'i', "i'm":'i', 'me':'me', 'my':'my',
-    // brand defenders (these get protected anyway but no harm)
-    'spurdo':'spurdo', 'sparde':'spärde',
+    // === MULTI-WORD (matched first via longest-key sort) =====
+    'paper hands':'baber hands',
+    'paper hand':'baber hand',
+
+    // === P → B: NOUNS (user canon) ===========================
+    'penis':'benis',
+    'pump':'bumb',
+    'pamp':'bamb',
+    'post':'bost',
+    'price':'brice',
+    'deposit':'debosit',
+    'pool':'bool',
+    'pepe':'bebe',
+    'paper':'baber',
+    'portfolio':'borfolio',
+    'profit':'brofit',
+    'people':'beople',
+    'power':'bower',
+    'party':'barty',
+    'public':'bublic',
+    'presale':'bresale',
+    'problem':'broblem',
+    'whitepaper':'whitebaber',
+    'dip':'dib',
+    'top':'tob',
+    'stop':'stob',
+    'jump':'jumb',
+    'help':'helb',
+    'support':'subort',
+    'ape':'abe',
+
+    // === P → B: VERBS / ADJ (user canon) =====================
+    'play':'blay',
+    'print':'brint',
+    'pretty':'bretty',
+
+    // === -ING DROPS (user canon) =============================
+    'aping':'abin',
+    'going':'goin',
+    'making':'makin',
+    'holding':'holdin',
+    'selling':'selin',
+    'buying':'buyin',
+    'pumping':'bumbin',
+    'dumping':'dumbin',
+    'grinning':'grinin',
+    'saying':'sayin',
+
+    // === CRYPTO SLANG (special — not p→b) ====================
+    'scam':'sker',
+    'scammed':'skerd',
+    'scamming':'skerin',
+    'rugged':'rugd',
+    'shill':'shil',
+    'shilling':'shilin',
+
+    // === DOUBLE-LETTER / SHORT DROPS (user canon) ============
+    'everyone':'erryone',
+    'every':'evry',
+    'what':'wat',
+    'good':'gud',
+    'look':'lok',
+    'need':'ned',
+    'feel':'fel',
+    'keep':'kep',
+    'seen':'sen',
+    'just':'jus',
+
+    // === ARTICLES / PRONOUNS (user canon) ====================
+    'the':'da',
+    'this':'dis',
+    'that':'dat',
+    'they':'dey',
+    'them':'dem',
+    'those':'dose',
+    'you':'u',
+    'your':'ur',
+
+    // === CONNECTIVES / NUMERALS (user canon) =================
+    'before':'b4',
+    'for':'4',
+    'more':'moar',
+    'with':'wit',
+    'and':'an',
+
+    // === MISC EXPLICIT (user canon) ==========================
+    'give':'gib',
+    'fuck':'fugg',
+    'fucks':'fuggs',
+    'hello':'helo',
+    'also':'alzo',
+    'awesome':'ebin',
+    'cool':'ebin',
+
+    // === BIBLE-CANONICAL EXTENSIONS ==========================
+    // iconic spurdish (bible: "is/iz, was/wuz" style drops)
+    'is':'iz',
+    'are':'r',
+    'was':'wuz',
+    'were':'wer',
+
+    // pattern-matched articles/pronouns
+    'these':'dese',
+    'their':'dere',
+    "they're":'dey r',
+    'theyre':'dey r',
+    "you're":'ur',
+    'youre':'ur',
+    "i'm":'i',
+    'im':'i',
+
+    // abbreviated numerals
+    'too':'2',
+    'two':'2',
+
+    // modern slang banished → bible-canonical alternates
+    'ser':'brudder',
+    'fren':'brudder',
+    'bro':'brudder',
+    'brother':'brudder',
+    'bestie':'brudder',
+    'wagmi':'we gon make it brudder',
+    'ngmi':'ngmi brudder',
+    'lfg':'gib benis',
+    'gm':'gib benis',
+    'gn':'gib benis sleeb',
+    'hi':'helo',
+    'hey':'helo',
+    'lol':'kek',
+    'haha':'kek',
+    'lmao':'kek',
+    'rofl':'kek',
+    'wtf':'wat da fugg',
+
+    // positive adjectives → ebin (bible: ebin is iconic)
+    'amazing':'ebin',
+    'great':'ebin',
+    'epic':'ebin',
+    'incredible':'ebin',
+    'beautiful':'ebin',
+    'perfect':'ebin',
+    'best':'ebin',
+    'nice':'ebin',
+    'fantastic':'ebin',
+    'excellent':'ebin',
+    'wonderful':'ebin',
+
+    // small natural extensions for grammatical flow
+    'love':'luv',
+    'thanks':'tanks',
+    'thank':'tank',
+    'really':'rly',
+    'gonna':'gon',
+    'wanna':'wan',
+    'something':'sumtin',
+    'thing':'ting',
+    'things':'tings',
+    'doing':'doin',
+    'coming':'comin',
   };
 
   function toSburdish(input) {
     if (!input || !input.trim()) return '';
     let s = ' ' + input.toLowerCase() + ' ';
 
-    // Stage 1: protect brand names from any transform
+    // Stage 1: protect brand & special tokens from any transform.
+    // longest/most-specific first so $spurdo and "spurdo spärde" aren't
+    // partially-consumed by the bare "spurdo" matcher.
     const protect = [];
-    s = s.replace(/\bspurdo\b/gi, m => { protect.push(m); return `\x00${protect.length-1}\x00`; });
-    s = s.replace(/\bsp[äa]rde\b/gi, m => { protect.push(m); return `\x00${protect.length-1}\x00`; });
+    const mark = (val) => { protect.push(val); return `\x00${protect.length-1}\x00`; };
 
-    // Stage 2: vocab swaps (whole word, longest first to avoid sub-matches)
+    s = s.replace(/\$spurdo\b/gi, () => mark('$spurdo'));
+    s = s.replace(/\bspurdo\s+sp[äa]rde\b/gi, () => mark('spurdo spärde'));
+    s = s.replace(/sp[äa]rde/gi, () => mark('spärde'));
+    s = s.replace(/\bspurdo\b/gi, () => mark('spurdo'));
+    // pump.fun → bumb.fun: protect as a unit so the dot survives punctuation strip
+    s = s.replace(/\bpump\.fun\b/gi, () => mark('bumb.fun'));
+
+    // Stage 2: vocab swaps. Each output gets stashed via mark() so the
+    // universal b-swap (Stage 3) can't mutate it — e.g. keep→kep stays "kep"
+    // instead of being re-touched to "keb" by the trailing p.
     const keys = Object.keys(SBUR_VOCAB).sort((a,b) => b.length - a.length);
     for (const eng of keys) {
       const esc = eng.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`\\b${esc}\\b`, 'gi');
-      s = s.replace(re, SBUR_VOCAB[eng]);
+      // multi-word keys contain spaces, so use (^|\W)…(?=\W|$) instead of \b…\b
+      const re = new RegExp(`(^|\\W)${esc}(?=\\W|$)`, 'gi');
+      s = s.replace(re, (_, pre) => pre + mark(SBUR_VOCAB[eng]));
     }
 
-    // Stage 3: B-for-P swap (universal)
-    s = s.replace(/p/g, 'b').replace(/P/g, 'B');
+    // Stage 3: universal B-for-P swap on remaining text (placeholders skipped
+    // automatically since \x00 isn't a 'p'). This catches words not in vocab.
+    s = s.replace(/p/g, 'b');
 
-    // Stage 4: strip punctuation (no periods/commas/!)
+    // Stage 4: strip punctuation (bible: no periods/commas/!)
     s = s.replace(/[.,!]/g, '');
     s = s.replace(/\s+/g, ' ').trim();
 
-    // Stage 5: restore protected brand tokens
-    s = s.replace(/\x00(\d+)\x00/g, (_, i) => protect[+i].toLowerCase());
+    // Stage 5: restore protected tokens
+    s = s.replace(/\x00(\d+)\x00/g, (_, i) => protect[+i]);
 
-    // Stage 6: terminal emoticon if none present
+    // Stage 6: terminal emoticon if none present (primary: :DDD)
     if (s.length && !/[:;x][DdPp)]+$/.test(s)) {
       s += ' :DDD';
     }
