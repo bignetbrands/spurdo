@@ -371,7 +371,7 @@
 
     <div class="state-box is-error hidden" id="totalsError">
       da chain no talk 2 us rite now :D<br>
-      <button class="refresh-btn" type="button" onclick="loadAll()">try again :D</button>
+      <button class="refresh-btn" type="button" onclick="loadAll(true)">try again :D</button>
     </div>
 
     <div class="hidden" id="totalsBody">
@@ -387,7 +387,7 @@
 
       <div class="as-of" id="asOf"></div>
       <div class="as-of" id="srcLine" style="margin-top:4px;font-family:var(--font-mono);font-size:0.72rem;"></div>
-      <button class="refresh-btn" type="button" onclick="loadAll()">refresh :D</button>
+      <button class="refresh-btn" type="button" onclick="loadAll(true)">refresh :D</button>
     </div>
   </section>
 
@@ -426,7 +426,7 @@
       couldnt read da treasury history — public rpc said no :D<br>
       <span style="font-size:0.85rem;">try again or add ur own rpc wit <span style="font-family:var(--font-mono)">?rpc=</span></span><br>
       <div class="as-of" id="cErrDetail" style="font-family:var(--font-mono);font-size:0.72rem;margin-top:6px;"></div>
-      <button class="refresh-btn" type="button" onclick="loadContribs()">try again :D</button>
+      <button class="refresh-btn" type="button" onclick="loadContribs(true)">try again :D</button>
     </div>
 
     <div class="state-box hidden" id="contribEmpty">nobody gave benis yet :D</div>
@@ -500,6 +500,34 @@
 
   /* ---------- helpers ---------- */
   const $ = (id) => document.getElementById(id);
+
+  /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
+  const CACHE_KEY = 'spurdo_revshare_v1';
+  const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
+  const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
+  const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
+  function readCache() {
+    try { const s = localStorage.getItem(CACHE_KEY); return s ? jparse(s) : null; }
+    catch (e) { return null; }
+  }
+  function writeCache(patch) {
+    try {
+      const c = readCache() || {};
+      Object.assign(c, patch, { savedAt: Date.now() });
+      localStorage.setItem(CACHE_KEY, jstr(c));
+    } catch (e) { console.warn('cache write failed', e); }
+  }
+  let DATA_TS = null;
+  let DATA_FROM_CACHE = false;
+  function asOfText() {
+    if (!DATA_TS) return '';
+    const base = 'as of ' + new Date(DATA_TS).toLocaleString('en-US');
+    if (!DATA_FROM_CACHE) return base + ' (live)';
+    const left = CACHE_MAX_AGE - (Date.now() - DATA_TS);
+    return base + (left > 0
+      ? ' (cached \u2014 auto refetch in ' + fmtIn(Math.floor(left / 1000)) + ')'
+      : ' (cached \u2014 refetching\u2026)');
+  }
 
   function b64ToBytes(b64) {
     const bin = atob(b64);
@@ -823,8 +851,20 @@
   let CONTRIB_ROWS = [];
   let CONTRIB_BUSY = false;
 
-  async function loadContribs() {
+  async function loadContribs(force = false) {
     if (CONTRIB_BUSY) return;
+    if (!force) {
+      const c = readCache();
+      if (c && c.contribRows && c.savedAt && (Date.now() - c.savedAt) < CACHE_MAX_AGE) {
+        CONTRIB_ROWS = c.contribRows;
+        renderContribs(CONTRIB_ROWS, c.pool ?? 0n, c.sent2dev ?? 0n);
+        $('cSrcLine').textContent = c.diagContrib || '';
+        $('contribLoading').classList.add('hidden');
+        $('contribError').classList.add('hidden');
+        $('contribBody').classList.remove('hidden');
+        return;
+      }
+    }
     CONTRIB_BUSY = true;
     const prog = $('cprog');
     const onP = (label, d, t, pass) => {
@@ -883,6 +923,7 @@
       renderContribs(CONTRIB_ROWS, pool, sent2dev);
       $('contribLoading').classList.add('hidden');
       $('contribBody').classList.remove('hidden');
+      writeCache({ contribRows: CONTRIB_ROWS, pool, sent2dev, diagContrib: diag });
     } catch (e) {
       console.warn('contrib scan failed:', e);
       $('cErrDetail').textContent = String(e && e.message || e);
@@ -1014,18 +1055,45 @@
     $('statPct').textContent = (SUPPLY_UI && SUPPLY_UI > 0)
       ? ((toUi(stillLocked) / SUPPLY_UI) * 100).toFixed(2) + '%'
       : '–';
-    $('asOf').textContent = 'as of ' + new Date().toLocaleString('en-US');
+    $('asOf').textContent = asOfText();
   }
 
   /* ---------- boot ---------- */
   let CURRENT_LOCKS = [];
 
-  async function loadAll() {
-    $('totalsLoading').classList.remove('hidden');
-    $('totalsError').classList.add('hidden');
-    $('totalsBody').classList.add('hidden');
-    $('locksEmpty').classList.add('hidden');
-    $('lockList').innerHTML = '';
+  async function loadAll(force = false) {
+    const c = readCache();
+    const fresh = c && c.savedAt && (Date.now() - c.savedAt) < CACHE_MAX_AGE;
+    const hadCache = !force && c && c.locks;
+
+    if (hadCache) {
+      // render instantly from cache — no network
+      DECIMALS = c.decimals ?? DECIMALS;
+      SUPPLY_UI = c.supplyUi ?? null;
+      DATA_TS = c.savedAt; DATA_FROM_CACHE = true;
+      CURRENT_LOCKS = c.locks;
+      renderTotals(CURRENT_LOCKS);
+      renderLocks(CURRENT_LOCKS);
+      $('srcLine').textContent = c.diagLocks || '';
+      $('totalsLoading').classList.add('hidden');
+      $('totalsError').classList.add('hidden');
+      $('totalsBody').classList.remove('hidden');
+      if (c.contribRows) {
+        CONTRIB_ROWS = c.contribRows;
+        renderContribs(CONTRIB_ROWS, c.pool ?? 0n, c.sent2dev ?? 0n);
+        $('cSrcLine').textContent = c.diagContrib || '';
+        $('contribLoading').classList.add('hidden');
+        $('contribBody').classList.remove('hidden');
+      }
+      if (fresh && c.contribRows) return;   // cache iz young — no fetching at all
+      $('srcLine').textContent = (c.diagLocks || '') + ' \u00b7 refetching\u2026';
+    } else {
+      $('totalsLoading').classList.remove('hidden');
+      $('totalsError').classList.add('hidden');
+      $('totalsBody').classList.add('hidden');
+      $('locksEmpty').classList.add('hidden');
+      $('lockList').innerHTML = '';
+    }
 
     try { await fetchSupply(); } catch (e) { console.warn('supply fetch failed', e); }
 
@@ -1042,23 +1110,28 @@
       diag.push('rpc ok (' + rpcRes.value.length + ')');
     } else { diag.push('rpc fail'); console.warn('rpc locks failed:', rpcRes.reason); }
 
-    $('srcLine').textContent = 'sources: ' + diag.join(' · ');
+    const diagLocks = 'sources: ' + diag.join(' \u00b7 ');
+    $('srcLine').textContent = diagLocks;
 
     if (rpcRes.status === 'rejected' && apiRes.status === 'rejected') {
-      $('totalsLoading').classList.add('hidden');
-      $('totalsError').classList.remove('hidden');
-      return;
+      if (!hadCache) {
+        $('totalsLoading').classList.add('hidden');
+        $('totalsError').classList.remove('hidden');
+      }
+      return; // cached view stays up if we had one
     }
 
     const locks = [...byAddr.values()];
 
     CURRENT_LOCKS = locks;
+    DATA_TS = Date.now(); DATA_FROM_CACHE = false;
     renderTotals(locks);
     renderLocks(locks);
     $('totalsLoading').classList.add('hidden');
     $('totalsBody').classList.remove('hidden');
+    writeCache({ locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks });
 
-    loadContribs(); // heavy scan runs after da fast numbers r up
+    loadContribs(true); // fresh locks → fresh contrib scan, cache gets updated after
   }
 
   // keep countdowns fresh without refetching
