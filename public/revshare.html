@@ -502,7 +502,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v2';
+  const CACHE_KEY = 'spurdo_revshare_v3';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -537,6 +537,65 @@
   }
 
   function u64(dv, off) { return dv.getBigUint64(off, true); }
+
+  /* ---------- vanilla ata derivation (verified vs @solana/web3.js) ----------
+     token acct addresses r deterministic from wallet+mint — deriving dem lets us
+     read history of accounts dat got CLOSED n vanished from getTokenAccountsByOwner */
+  const ED_P = 2n ** 255n - 19n;
+  const edMod = (a) => { a %= ED_P; return a < 0n ? a + ED_P : a; };
+  const edPow = (b, e) => { let r = 1n; b = edMod(b); while (e > 0n) { if (e & 1n) r = r * b % ED_P; b = b * b % ED_P; e >>= 1n; } return r; };
+  const edInv = (a) => edPow(a, ED_P - 2n);
+  const ED_D = edMod(-121665n * edInv(121666n));
+  function isOnCurve(b) {
+    let y = 0n;
+    for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(b[i] & (i === 31 ? 0x7f : 0xff));
+    if (y >= ED_P) return false;
+    const y2 = edMod(y * y);
+    const x2 = edMod(edMod(y2 - 1n) * edInv(edMod(ED_D * y2 + 1n)));
+    let x = edPow(x2, (ED_P + 3n) / 8n);
+    if (edMod(x * x) !== x2) x = edMod(x * edPow(2n, (ED_P - 1n) / 4n));
+    if (edMod(x * x) !== x2) return false;
+    if (x === 0n && ((b[31] & 0x80) >>> 7) === 1) return false;
+    return true;
+  }
+  const B58A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function b58decode(s) {
+    let n = 0n;
+    for (const c of s) { const v = B58A.indexOf(c); if (v < 0) throw new Error('bad b58'); n = n * 58n + BigInt(v); }
+    const bytes = [];
+    while (n > 0n) { bytes.unshift(Number(n & 255n)); n >>= 8n; }
+    for (const c of s) { if (c === '1') bytes.unshift(0); else break; }
+    return new Uint8Array(bytes);
+  }
+  function b58encode(bytes) {
+    let n = 0n;
+    for (const b of bytes) n = (n << 8n) | BigInt(b);
+    let s = '';
+    while (n > 0n) { s = B58A[Number(n % 58n)] + s; n /= 58n; }
+    for (const b of bytes) { if (b === 0) s = '1' + s; else break; }
+    return s;
+  }
+  const teEnc = (s) => new TextEncoder().encode(s);
+  function concatB(arrs) {
+    const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0));
+    let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; }
+    return out;
+  }
+  const TOKEN_PROG   = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const TOKEN22_PROG = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+  const ATA_PROG     = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+  async function findPda(seeds, programId32) {
+    for (let bump = 255; bump >= 0; bump--) {
+      const buf = concatB([...seeds, new Uint8Array([bump]), programId32, teEnc('ProgramDerivedAddress')]);
+      const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+      if (!isOnCurve(h)) return h;
+    }
+    throw new Error('no pda');
+  }
+  async function deriveAta(owner, mint, tokenProg = TOKEN_PROG) {
+    const pda = await findPda([b58decode(owner), b58decode(tokenProg), b58decode(mint)], b58decode(ATA_PROG));
+    return b58encode(pda);
+  }
 
   function toUi(big) { return Number(big) / Math.pow(10, DECIMALS); }
 
@@ -814,8 +873,13 @@
 
   async function scanWallet(owner, label, onProgress) {
     const tokenAccts = new Set(await findAtas(owner).catch(() => []));
-    // scan da owner address TOO — deposits into closed/old token accts still reference flows we can read
-    const targets = [owner, ...tokenAccts];
+    // derive canonical token acct addresses — closed accts keep dere sig history at da same address
+    const derived = [];
+    try { derived.push(await deriveAta(owner, MINT)); } catch (e) { console.warn('ata derive failed', e); }
+    try { derived.push(await deriveAta(owner, MINT, TOKEN22_PROG)); } catch (e) {}
+    const mine = new Set([...tokenAccts, ...derived]);
+    // scan owner address too (catches create+deposit combos n squads ops)
+    const targets = [...new Set([owner, ...mine])];
     const sigMap = new Map();
     for (const t of targets) {
       for (const s of await allSigsMulti(t)) {
@@ -823,11 +887,11 @@
       }
     }
     const sigs = [...sigMap.values()];
-    const stats = { atas: tokenAccts.size, sigs: sigs.length, ok: 0, fail: 0 };
+    const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0 };
     const ins = [], outs = [];
     const useTx = (tx, sig) => {
-      let t = deltaTransfers(tx, tokenAccts, owner);
-      if (!t.ins.length && !t.outs.length) t = walkTransfers(tx, tokenAccts);
+      let t = deltaTransfers(tx, mine, owner);
+      if (!t.ins.length && !t.outs.length) t = walkTransfers(tx, mine);
       const bt = sig.blockTime || (tx && tx.blockTime) || 0;
       for (const x of t.ins)  ins.push({ ...x, time: bt, sig: sig.signature });
       for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
