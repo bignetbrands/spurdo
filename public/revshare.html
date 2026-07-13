@@ -502,7 +502,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v1';
+  const CACHE_KEY = 'spurdo_revshare_v2';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -612,25 +612,30 @@
 
   /* ---------- rpc plumbing ---------- */
   let GOOD_RPC = null; // sticky: first endpoint dat answers keeps da job
+  async function rpcCallAt(url, method, params) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error('rpc ' + res.status);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message || 'rpc error');
+      return json.result;
+    } finally { clearTimeout(t); }
+  }
   async function rpcCall(method, params) {
     let lastErr = new Error('no rpc');
     const order = GOOD_RPC ? [GOOD_RPC, ...RPC_URLS.filter(u => u !== GOOD_RPC)] : RPC_URLS;
     for (const url of order) {
       try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 12000);
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-          signal: ctrl.signal,
-        });
-        clearTimeout(t);
-        if (!res.ok) throw new Error('rpc ' + res.status);
-        const json = await res.json();
-        if (json.error) throw new Error(json.error.message || 'rpc error');
+        const result = await rpcCallAt(url, method, params);
         GOOD_RPC = url;
-        return json.result;
+        return result;
       } catch (e) { lastErr = e; if (url === GOOD_RPC) GOOD_RPC = null; }
     }
     throw lastErr;
@@ -726,18 +731,28 @@
     return (r.value || []).map(v => v.pubkey);
   }
 
-  async function allSigs(addr, cap = 3000) {
+  async function allSigsAt(url, addr, cap = 3000) {
     const out = [];
     let before;
     while (out.length < cap) {
       const opts = before ? { limit: 1000, before } : { limit: 1000 };
-      const batch = await rpcCall('getSignaturesForAddress', [addr, opts]);
+      const batch = await rpcCallAt(url, 'getSignaturesForAddress', [addr, opts]);
       if (!batch || !batch.length) break;
       out.push(...batch);
       if (batch.length < 1000) break;
       before = batch[batch.length - 1].signature;
     }
     return out;
+  }
+
+  /* some public nodes prune old history — ask two nodes n union da lists */
+  async function allSigsMulti(addr, cap = 3000) {
+    const eps = [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))].slice(0, 2);
+    const lists = await Promise.all(eps.map(u => allSigsAt(u, addr, cap).catch(() => null)));
+    if (lists.every(l => l === null)) throw new Error('sig fetch failed for ' + addr.slice(0, 6));
+    const seen = new Map();
+    for (const l of lists) for (const s of (l || [])) if (!seen.has(s.signature)) seen.set(s.signature, s);
+    return [...seen.values()];
   }
 
   function walkTransfers(tx, atas) {
@@ -761,8 +776,8 @@
     return res;
   }
 
-  /* fallback wen instruction parsing sees nothing: read da token balance deltas */
-  function deltaTransfers(tx, atas) {
+  /* primary extractor: token balance deltas — sees evry flow incl closed accts (matched by owner) */
+  function deltaTransfers(tx, tokenAccts, scanOwner) {
     const res = { ins: [], outs: [] };
     const meta = tx && tx.meta;
     if (!meta || !meta.preTokenBalances || !meta.postTokenBalances) return res;
@@ -781,56 +796,63 @@
       const after  = BigInt((q && q.uiTokenAmount && q.uiTokenAmount.amount) || '0');
       rows.push({ addr, owner: (q && q.owner) || (p && p.owner) || addr, delta: after - before });
     }
+    const isMine = (r) => tokenAccts.has(r.addr) || r.owner === scanOwner;
     for (const r of rows) {
-      if (!atas.has(r.addr) || r.delta === 0n) continue;
+      if (!isMine(r) || r.delta === 0n) continue;
       if (r.delta > 0n) {
-        const payer = rows.filter(x => x.delta < 0n && !atas.has(x.addr))
+        const payer = rows.filter(x => x.delta < 0n && !isMine(x))
                           .sort((a, b) => (a.delta < b.delta ? -1 : 1))[0];
         res.ins.push({ owner: (payer && payer.owner) || '?', amount: r.delta });
       } else {
-        res.outs.push({ dest: 'balance-delta', amount: -r.delta });
+        const recv = rows.filter(x => x.delta > 0n && !isMine(x))
+                         .sort((a, b) => (a.delta > b.delta ? -1 : 1))[0];
+        res.outs.push({ dest: (recv && recv.addr) || 'balance-delta', destOwner: recv && recv.owner, amount: -r.delta });
       }
     }
     return res;
   }
 
   async function scanWallet(owner, label, onProgress) {
-    const atas = new Set(await findAtas(owner));
-    const stats = { atas: atas.size, sigs: 0, ok: 0, fail: 0 };
-    if (!atas.size) return { ins: [], outs: [], stats };
+    const tokenAccts = new Set(await findAtas(owner).catch(() => []));
+    // scan da owner address TOO — deposits into closed/old token accts still reference flows we can read
+    const targets = [owner, ...tokenAccts];
+    const sigMap = new Map();
+    for (const t of targets) {
+      for (const s of await allSigsMulti(t)) {
+        if (!s.err && !sigMap.has(s.signature)) sigMap.set(s.signature, s);
+      }
+    }
+    const sigs = [...sigMap.values()];
+    const stats = { atas: tokenAccts.size, sigs: sigs.length, ok: 0, fail: 0 };
     const ins = [], outs = [];
     const useTx = (tx, sig) => {
-      let t = walkTransfers(tx, atas);
-      if (!t.ins.length && !t.outs.length) t = deltaTransfers(tx, atas);
+      let t = deltaTransfers(tx, tokenAccts, owner);
+      if (!t.ins.length && !t.outs.length) t = walkTransfers(tx, tokenAccts);
       const bt = sig.blockTime || (tx && tx.blockTime) || 0;
       for (const x of t.ins)  ins.push({ ...x, time: bt, sig: sig.signature });
       for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
     };
-    for (const ata of atas) {
-      const sigs = (await allSigs(ata)).filter(s => !s.err);
-      stats.sigs += sigs.length;
-      let queue = sigs;
-      for (let pass = 0; pass < 2 && queue.length; pass++) {
-        const CONC = pass === 0 ? 2 : 1;
-        const WAIT = pass === 0 ? 400 : 900;
-        const failed = [];
-        for (let i = 0; i < queue.length; i += CONC) {
-          const chunk = queue.slice(i, i + CONC);
-          const txs = await Promise.all(chunk.map(s =>
-            rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
-          txs.forEach((tx, j) => {
-            if (tx === undefined) { failed.push(chunk[j]); return; }
-            stats.ok++;
-            if (tx) useTx(tx, chunk[j]);
-          });
-          if (onProgress) onProgress(label, Math.min(stats.ok + failed.length, stats.sigs), stats.sigs, pass);
-          await new Promise(r => setTimeout(r, WAIT));
-        }
-        queue = failed;
-        if (queue.length && pass === 0) await new Promise(r => setTimeout(r, 1500));
+    let queue = sigs;
+    for (let pass = 0; pass < 2 && queue.length; pass++) {
+      const CONC = pass === 0 ? 2 : 1;
+      const WAIT = pass === 0 ? 400 : 900;
+      const failed = [];
+      for (let i = 0; i < queue.length; i += CONC) {
+        const chunk = queue.slice(i, i + CONC);
+        const txs = await Promise.all(chunk.map(s =>
+          rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+        txs.forEach((tx, j) => {
+          if (tx === undefined) { failed.push(chunk[j]); return; }
+          stats.ok++;
+          if (tx) useTx(tx, chunk[j]);
+        });
+        if (onProgress) onProgress(label, Math.min(stats.ok + failed.length, stats.sigs), stats.sigs, pass);
+        await new Promise(r => setTimeout(r, WAIT));
       }
-      stats.fail += queue.length;
+      queue = failed;
+      if (queue.length && pass === 0) await new Promise(r => setTimeout(r, 1500));
     }
+    stats.fail += queue.length;
     return { ins, outs, stats };
   }
 
@@ -893,11 +915,11 @@
       }
 
       // map payouts back 2 contributor wallets
-      const destAtas = new Set(rev.outs.map(o => o.dest));
-      const ownerMap = destAtas.size ? await ownersOf(destAtas) : {};
+      const needLookup = new Set(rev.outs.filter(o => !o.destOwner && o.dest !== 'balance-delta').map(o => o.dest));
+      const ownerMap = needLookup.size ? await ownersOf(needLookup) : {};
       const paid = new Map();
       for (const o of rev.outs) {
-        const w = ownerMap[o.dest] || o.dest;
+        const w = o.destOwner || ownerMap[o.dest] || o.dest;
         paid.set(w, (paid.get(w) || 0n) + o.amount);
       }
 
