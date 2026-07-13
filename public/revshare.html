@@ -502,7 +502,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v3';
+  const CACHE_KEY = 'spurdo_revshare_v4';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -804,10 +804,20 @@
     return out;
   }
 
-  /* some public nodes prune old history — ask two nodes n union da lists */
+  /* public nodes prune old history n rate-limit — ask evry node, union, count per node */
+  const SIG_NODE_STATS = [];
   async function allSigsMulti(addr, cap = 3000) {
-    const eps = [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))].slice(0, 2);
-    const lists = await Promise.all(eps.map(u => allSigsAt(u, addr, cap).catch(() => null)));
+    const eps = [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))];
+    const lists = [];
+    for (const u of eps) {
+      let l = null;
+      for (let attempt = 0; attempt < 2 && l === null; attempt++) {
+        try { l = await allSigsAt(u, addr, cap); }
+        catch (e) { if (attempt === 0) await new Promise(r => setTimeout(r, 800)); }
+      }
+      lists.push(l);
+      SIG_NODE_STATS.push({ node: u.replace(/^https?:\/\//, '').split('/')[0].split('.')[0], n: l === null ? -1 : l.length });
+    }
     if (lists.every(l => l === null)) throw new Error('sig fetch failed for ' + addr.slice(0, 6));
     const seen = new Map();
     for (const l of lists) for (const s of (l || [])) if (!seen.has(s.signature)) seen.set(s.signature, s);
@@ -861,7 +871,12 @@
       if (r.delta > 0n) {
         const payer = rows.filter(x => x.delta < 0n && !isMine(x))
                           .sort((a, b) => (a.delta < b.delta ? -1 : 1))[0];
-        res.ins.push({ owner: (payer && payer.owner) || '?', amount: r.delta });
+        res.ins.push({
+          owner: (payer && payer.owner) || '?',
+          srcAddr: payer && payer.addr,
+          srcOwner: payer && payer.owner,
+          amount: r.delta,
+        });
       } else {
         const recv = rows.filter(x => x.delta > 0n && !isMine(x))
                          .sort((a, b) => (a.delta > b.delta ? -1 : 1))[0];
@@ -871,13 +886,13 @@
     return res;
   }
 
-  async function scanWallet(owner, label, onProgress) {
+  async function scanWallet(owner, label, onProgress, extraAccts) {
     const tokenAccts = new Set(await findAtas(owner).catch(() => []));
     // derive canonical token acct addresses — closed accts keep dere sig history at da same address
     const derived = [];
     try { derived.push(await deriveAta(owner, MINT)); } catch (e) { console.warn('ata derive failed', e); }
     try { derived.push(await deriveAta(owner, MINT, TOKEN22_PROG)); } catch (e) {}
-    const mine = new Set([...tokenAccts, ...derived]);
+    const mine = new Set([...tokenAccts, ...derived, ...(extraAccts || [])]);
     // scan owner address too (catches create+deposit combos n squads ops)
     const targets = [...new Set([owner, ...mine])];
     const sigMap = new Map();
@@ -962,14 +977,59 @@
       $('contribError').classList.add('hidden');
       $('contribEmpty').classList.add('hidden');
 
-      const tre = await scanWallet(TREASURY, 'treasury', onP);
+      SIG_NODE_STATS.length = 0;
+
+      // 1) da dev wallet received da sweeps — its inflow sources ARE da historical treasury accounts
+      const dev = await scanWallet(DEV_WALLET, 'dev wallet', onP);
+      const candAccts = new Map(); // srcAddr -> {srcOwner, amount}
+      for (const i of dev.ins) {
+        if (!i.srcAddr) continue;
+        const c = candAccts.get(i.srcAddr) || { srcOwner: i.srcOwner, amount: 0n };
+        c.amount += i.amount;
+        candAccts.set(i.srcAddr, c);
+      }
+      // keep sources dat r da treasury itself, or big + closed (swept accts) — dex pools stay open
+      const discoveredAccts = [], discoveredOwners = new Set();
+      const unknown = [...candAccts.entries()].filter(([a, c]) => c.srcOwner !== TREASURY && c.srcOwner !== REVSHARE_WALLET);
+      let closedMap = {};
+      if (unknown.length) {
+        const r = await rpcCall('getMultipleAccounts', [unknown.map(([a]) => a).slice(0, 100), { encoding: 'base64' }]).catch(() => null);
+        ((r && r.value) || []).forEach((acc, j) => { closedMap[unknown[j][0]] = (acc === null); });
+      }
+      for (const [addr, c] of candAccts) {
+        if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
+        if (closedMap[addr] && c.amount >= 10n ** BigInt(DECIMALS) * 1000000n / 1000n) { // closed + sweep-sized
+          discoveredAccts.push(addr);
+          if (c.srcOwner) discoveredOwners.add(c.srcOwner);
+        }
+      }
+      console.log('discovered treasury accts:', discoveredAccts, 'owners:', [...discoveredOwners]);
+
+      // 2) treasury scan across configured identity + evryding discovered
+      const tre = await scanWallet(TREASURY, 'treasury', onP, discoveredAccts);
+      for (const vo of discoveredOwners) {
+        if (vo === TREASURY || vo === DEV_WALLET) continue;
+        const extra = await scanWallet(vo, 'treasury (vault)', onP);
+        tre.ins.push(...extra.ins); tre.outs.push(...extra.outs);
+        tre.stats.atas += extra.stats.atas; tre.stats.sigs += extra.stats.sigs;
+        tre.stats.ok += extra.stats.ok; tre.stats.fail += extra.stats.fail;
+      }
       const rev = await scanWallet(REVSHARE_WALLET, 'revshare', onP);
+
+      const internal = new Set([...INTERNAL_WALLETS, ...discoveredOwners]);
+      const nodeDiag = (() => {
+        const agg = {};
+        for (const s of SIG_NODE_STATS) { agg[s.node] = agg[s.node] || { ok: 0, err: 0, n: 0 }; if (s.n < 0) agg[s.node].err++; else { agg[s.node].ok++; agg[s.node].n += s.n; } }
+        return Object.entries(agg).map(([k, v]) => k + ':' + (v.err ? v.ok + 'ok/' + v.err + 'err' : v.n + ' sigs')).join(' ');
+      })();
 
       const diag =
         'treasury: ' + tre.stats.atas + ' acct \u00b7 ' + tre.stats.ok + '/' + tre.stats.sigs + ' txs' +
         (tre.stats.fail ? ' (' + tre.stats.fail + ' dropped)' : '') +
         '  \u00b7\u00b7  revshare: ' + rev.stats.atas + ' acct \u00b7 ' + rev.stats.ok + '/' + rev.stats.sigs + ' txs' +
-        (rev.stats.fail ? ' (' + rev.stats.fail + ' dropped)' : '');
+        (rev.stats.fail ? ' (' + rev.stats.fail + ' dropped)' : '') +
+        (discoveredAccts.length ? '  \u00b7\u00b7  found ' + discoveredAccts.length + ' old acct' : '') +
+        '  \u00b7\u00b7  ' + nodeDiag;
       $('cSrcLine').textContent = diag;
       console.log('contrib scan:', diag);
 
@@ -990,7 +1050,7 @@
       // aggregate deposits, internal wallets dont count
       const agg = new Map();
       for (const d of tre.ins) {
-        if (d.owner === '?' || INTERNAL_WALLETS.includes(d.owner)) continue;
+        if (d.owner === '?' || internal.has(d.owner)) continue;
         const a = agg.get(d.owner) || { total: 0n, n: 0, first: d.time, last: d.time };
         a.total += d.amount; a.n++;
         if (d.time && (!a.first || d.time < a.first)) a.first = d.time;
