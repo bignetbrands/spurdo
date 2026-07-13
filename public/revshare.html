@@ -361,6 +361,7 @@
       </div>
 
       <div class="as-of" id="asOf"></div>
+      <div class="as-of" id="srcLine" style="margin-top:4px;font-family:var(--font-mono);font-size:0.72rem;"></div>
       <button class="refresh-btn" type="button" onclick="loadAll()">refresh :D</button>
     </div>
   </section>
@@ -401,6 +402,9 @@
     'https://api.mainnet-beta.solana.com',
     'https://solana.drpc.org',
   ];
+  // test ur own rpc widout redeploy: /revshare?rpc=https://ur-helius-url
+  const customRpc = new URLSearchParams(location.search).get('rpc');
+  if (customRpc) RPC_URLS.unshift(customRpc);
 
   /* === streamflow contract account layout offsets (v: js-sdk) ===
      withdrawn 17 | canceled_at 25 | end 33 | sender 49 | recipient 113
@@ -429,6 +433,17 @@
   function u64(dv, off) { return dv.getBigUint64(off, true); }
 
   function toUi(big) { return Number(big) / Math.pow(10, DECIMALS); }
+
+  // api amounts can be raw ("12500000000000") or human ("12500000.5")
+  function parseAmt(s) {
+    s = String(s ?? '0').trim();
+    if (!s || s === 'null') return 0n;
+    if (s.includes('.')) {
+      const [i, f = ''] = s.split('.');
+      return BigInt(i + (f + '0'.repeat(DECIMALS)).slice(0, DECIMALS));
+    }
+    return BigInt(s);
+  }
 
   function fmtAmt(n) {
     if (!isFinite(n)) return '–';
@@ -555,22 +570,34 @@
     return locks;
   }
 
-  /* fallback: streamflow public api filtered by da multisig sender */
+  /* streamflow public api — locks can be sent from or 2 da multisig so ask both ways */
   async function fetchLocksApi() {
-    const url = STREAMFLOW_API + '/v2/api/contracts/tabularium/?sender=' + encodeURIComponent(LOCK_SENDER);
-    const res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
-    if (!res.ok) throw new Error('api ' + res.status);
-    const rows = await res.json();
+    const base = STREAMFLOW_API + '/v2/api/contracts/tabularium/?';
+    const urls = [
+      base + 'sender=' + encodeURIComponent(LOCK_SENDER),
+      base + 'recipient=' + encodeURIComponent(LOCK_SENDER),
+    ];
+    const settled = await Promise.allSettled(urls.map(u =>
+      fetch(u, { headers: { 'Content-Type': 'application/json' } })
+        .then(r => { if (!r.ok) throw new Error('api ' + r.status); return r.json(); })
+    ));
+    const rows = [];
+    let ok = false;
+    for (const s of settled) {
+      if (s.status === 'fulfilled' && Array.isArray(s.value)) { ok = true; rows.push(...s.value); }
+    }
+    if (!ok) throw new Error('api unreachable');
     const toSec = (iso) => iso ? Math.floor(new Date(iso).getTime() / 1000) : 0;
-    return (rows || [])
-      .filter(r => r.mint === MINT)
+    const seen = new Set();
+    return rows
+      .filter(r => r.mint === MINT && !seen.has(r.address) && seen.add(r.address))
       .map(r => ({
         address: r.address,
         name: r.name || '',
-        deposited:   BigInt(r.amount || '0'),
-        withdrawn:   BigInt(r.claimedAmount || '0'),
-        cliffAmount: BigInt(r.cliffAmount || '0'),
-        perPeriod:   BigInt(r.amountPerPeriod || '0'),
+        deposited:   parseAmt(r.amount),
+        withdrawn:   parseAmt(r.claimedAmount),
+        cliffAmount: parseAmt(r.cliffAmount),
+        perPeriod:   parseAmt(r.amountPerPeriod),
         start:  toSec(r.startDt),
         end:    toSec(r.endDt),
         cliff:  toSec(r.startDt),   // api has no cliff ts; start ≈ cliff for our locks
@@ -675,19 +702,30 @@
     $('locksEmpty').classList.add('hidden');
     $('lockList').innerHTML = '';
 
-    try { await fetchSupply(); } catch (e) { /* pct just shows – */ }
+    try { await fetchSupply(); } catch (e) { console.warn('supply fetch failed', e); }
 
-    let locks = null;
-    try { locks = await fetchLocksRpc(); }
-    catch (e) {
-      try { locks = await fetchLocksApi(); } catch (e2) { locks = null; }
-    }
+    // ask da chain and da api at da same time, merge, dedupe by address (chain wins)
+    const [rpcRes, apiRes] = await Promise.allSettled([fetchLocksRpc(), fetchLocksApi()]);
+    const diag = [];
+    const byAddr = new Map();
+    if (apiRes.status === 'fulfilled') {
+      for (const l of apiRes.value) byAddr.set(l.address, l);
+      diag.push('api ok (' + apiRes.value.length + ')');
+    } else { diag.push('api fail'); console.warn('api locks failed:', apiRes.reason); }
+    if (rpcRes.status === 'fulfilled') {
+      for (const l of rpcRes.value) byAddr.set(l.address, l);
+      diag.push('rpc ok (' + rpcRes.value.length + ')');
+    } else { diag.push('rpc fail'); console.warn('rpc locks failed:', rpcRes.reason); }
 
-    if (locks === null) {
+    $('srcLine').textContent = 'sources: ' + diag.join(' · ');
+
+    if (rpcRes.status === 'rejected' && apiRes.status === 'rejected') {
       $('totalsLoading').classList.add('hidden');
       $('totalsError').classList.remove('hidden');
       return;
     }
+
+    const locks = [...byAddr.values()];
 
     CURRENT_LOCKS = locks;
     renderTotals(locks);
