@@ -425,6 +425,7 @@
     <div class="state-box is-error hidden" id="contribError">
       couldnt read da treasury history — public rpc said no :D<br>
       <span style="font-size:0.85rem;">try again or add ur own rpc wit <span style="font-family:var(--font-mono)">?rpc=</span></span><br>
+      <div class="as-of" id="cErrDetail" style="font-family:var(--font-mono);font-size:0.72rem;margin-top:6px;"></div>
       <button class="refresh-btn" type="button" onclick="loadContribs()">try again :D</button>
     </div>
 
@@ -447,6 +448,7 @@
       </div>
 
       <button class="refresh-btn" type="button" onclick="downloadCsv()">download csv :D</button>
+      <div class="as-of" id="cSrcLine" style="margin-top:10px;font-family:var(--font-mono);font-size:0.72rem;"></div>
     </div>
   </section>
 
@@ -731,28 +733,77 @@
     return res;
   }
 
-  async function scanWallet(owner, label, onProgress) {
-    const atas = new Set(await findAtas(owner));
-    if (!atas.size) return { ins: [], outs: [] };
-    const ins = [], outs = [];
-    for (const ata of atas) {
-      const sigs = (await allSigs(ata)).filter(s => !s.err);
-      const CONC = 4;
-      for (let i = 0; i < sigs.length; i += CONC) {
-        const chunk = sigs.slice(i, i + CONC);
-        const txs = await Promise.all(chunk.map(s =>
-          rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => null)));
-        txs.forEach((tx, j) => {
-          const t = walkTransfers(tx, atas);
-          const bt = chunk[j].blockTime || (tx && tx.blockTime) || 0;
-          for (const x of t.ins)  ins.push({ ...x, time: bt, sig: chunk[j].signature });
-          for (const x of t.outs) outs.push({ ...x, time: bt, sig: chunk[j].signature });
-        });
-        if (onProgress) onProgress(label, Math.min(i + CONC, sigs.length), sigs.length);
-        await new Promise(r => setTimeout(r, 220));
+  /* fallback wen instruction parsing sees nothing: read da token balance deltas */
+  function deltaTransfers(tx, atas) {
+    const res = { ins: [], outs: [] };
+    const meta = tx && tx.meta;
+    if (!meta || !meta.preTokenBalances || !meta.postTokenBalances) return res;
+    let keys = ((tx.transaction && tx.transaction.message && tx.transaction.message.accountKeys) || [])
+      .map(k => (typeof k === 'string' ? k : k && k.pubkey));
+    const la = meta.loadedAddresses || {};
+    keys = keys.concat(la.writable || [], la.readonly || []);
+    const pre = new Map(), post = new Map();
+    for (const b of meta.preTokenBalances)  if (b.mint === MINT) pre.set(b.accountIndex, b);
+    for (const b of meta.postTokenBalances) if (b.mint === MINT) post.set(b.accountIndex, b);
+    const rows = [];
+    for (const i of new Set([...pre.keys(), ...post.keys()])) {
+      const addr = keys[i]; if (!addr) continue;
+      const p = pre.get(i), q = post.get(i);
+      const before = BigInt((p && p.uiTokenAmount && p.uiTokenAmount.amount) || '0');
+      const after  = BigInt((q && q.uiTokenAmount && q.uiTokenAmount.amount) || '0');
+      rows.push({ addr, owner: (q && q.owner) || (p && p.owner) || addr, delta: after - before });
+    }
+    for (const r of rows) {
+      if (!atas.has(r.addr) || r.delta === 0n) continue;
+      if (r.delta > 0n) {
+        const payer = rows.filter(x => x.delta < 0n && !atas.has(x.addr))
+                          .sort((a, b) => (a.delta < b.delta ? -1 : 1))[0];
+        res.ins.push({ owner: (payer && payer.owner) || '?', amount: r.delta });
+      } else {
+        res.outs.push({ dest: 'balance-delta', amount: -r.delta });
       }
     }
-    return { ins, outs };
+    return res;
+  }
+
+  async function scanWallet(owner, label, onProgress) {
+    const atas = new Set(await findAtas(owner));
+    const stats = { atas: atas.size, sigs: 0, ok: 0, fail: 0 };
+    if (!atas.size) return { ins: [], outs: [], stats };
+    const ins = [], outs = [];
+    const useTx = (tx, sig) => {
+      let t = walkTransfers(tx, atas);
+      if (!t.ins.length && !t.outs.length) t = deltaTransfers(tx, atas);
+      const bt = sig.blockTime || (tx && tx.blockTime) || 0;
+      for (const x of t.ins)  ins.push({ ...x, time: bt, sig: sig.signature });
+      for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
+    };
+    for (const ata of atas) {
+      const sigs = (await allSigs(ata)).filter(s => !s.err);
+      stats.sigs += sigs.length;
+      let queue = sigs;
+      for (let pass = 0; pass < 2 && queue.length; pass++) {
+        const CONC = pass === 0 ? 2 : 1;
+        const WAIT = pass === 0 ? 400 : 900;
+        const failed = [];
+        for (let i = 0; i < queue.length; i += CONC) {
+          const chunk = queue.slice(i, i + CONC);
+          const txs = await Promise.all(chunk.map(s =>
+            rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+          txs.forEach((tx, j) => {
+            if (tx === undefined) { failed.push(chunk[j]); return; }
+            stats.ok++;
+            if (tx) useTx(tx, chunk[j]);
+          });
+          if (onProgress) onProgress(label, Math.min(stats.ok + failed.length, stats.sigs), stats.sigs, pass);
+          await new Promise(r => setTimeout(r, WAIT));
+        }
+        queue = failed;
+        if (queue.length && pass === 0) await new Promise(r => setTimeout(r, 1500));
+      }
+      stats.fail += queue.length;
+    }
+    return { ins, outs, stats };
   }
 
   async function ownersOf(ataSet) {
@@ -776,7 +827,9 @@
     if (CONTRIB_BUSY) return;
     CONTRIB_BUSY = true;
     const prog = $('cprog');
-    const onP = (label, d, t) => { prog.textContent = label + ' tx ' + d + '/' + t; };
+    const onP = (label, d, t, pass) => {
+      prog.textContent = label + ' tx ' + d + '/' + t + (pass ? ' (retry pass)' : '');
+    };
     try {
       $('contribLoading').classList.remove('hidden');
       $('contribBody').classList.add('hidden');
@@ -785,6 +838,19 @@
 
       const tre = await scanWallet(TREASURY, 'treasury', onP);
       const rev = await scanWallet(REVSHARE_WALLET, 'revshare', onP);
+
+      const diag =
+        'treasury: ' + tre.stats.atas + ' acct \u00b7 ' + tre.stats.ok + '/' + tre.stats.sigs + ' txs' +
+        (tre.stats.fail ? ' (' + tre.stats.fail + ' dropped)' : '') +
+        '  \u00b7\u00b7  revshare: ' + rev.stats.atas + ' acct \u00b7 ' + rev.stats.ok + '/' + rev.stats.sigs + ' txs' +
+        (rev.stats.fail ? ' (' + rev.stats.fail + ' dropped)' : '');
+      $('cSrcLine').textContent = diag;
+      console.log('contrib scan:', diag);
+
+      // rpc dropped txs and we found nothing → dont pretend da treasury iz embty
+      if (tre.stats.fail > 0 && tre.ins.length === 0) {
+        throw new Error('rpc dropped ' + tre.stats.fail + ' of ' + tre.stats.sigs + ' treasury txs');
+      }
 
       // map payouts back 2 contributor wallets
       const destAtas = new Set(rev.outs.map(o => o.dest));
@@ -819,6 +885,7 @@
       $('contribBody').classList.remove('hidden');
     } catch (e) {
       console.warn('contrib scan failed:', e);
+      $('cErrDetail').textContent = String(e && e.message || e);
       $('contribLoading').classList.add('hidden');
       $('contribError').classList.remove('hidden');
     } finally {
