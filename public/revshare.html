@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>da benis vault :DDD — $spurdo locks</title>
+  <meta name="description" content="evry $spurdo lock on streamflow live from da chain :DDD">
+  <style>
+    /* === RESET === */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    /* === TOKENS (same as landing) === */
+    :root {
+      --cream-page: #f5e9c9;
+      --cream-light: #faf1d6;
+      --paper:      #fffbea;
+      --brown:      #8b5a3c;
+      --brown-dark: #5a3820;
+      --muzzle:     #eacf94;
+      --mouth-pink: #e8a098;
+      --ink:        #1a1a1a;
+      --ink-soft:   #2a2a2a;
+      --yellow:     #ffe066;
+      --red-troll:  #e94b3c;
+      --green-ok:   #8cc968;
+      --shadow:     3px 3px 0 var(--ink);
+      --shadow-lg:  6px 6px 0 var(--ink);
+      --font-main:  "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive;
+      --font-mono:  "Courier New", "Courier", monospace;
+    }
+
+    body {
+      background: var(--cream-page);
+      background-image:
+        radial-gradient(circle at 10% 10%, rgba(255,255,255,0.45) 0, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(255,255,255,0.35) 0, transparent 45%);
+      font-family: var(--font-main);
+      color: var(--ink);
+      overflow-x: hidden;
+      min-height: 100vh;
+      padding: 24px 16px 80px;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* === BACK LINK === */
+    .back-link {
+      display: inline-block;
+      font-size: 1rem;
+      color: var(--ink);
+      text-decoration: none;
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 6px 14px;
+      box-shadow: var(--shadow);
+      transform: rotate(-1deg);
+      margin-bottom: 20px;
+    }
+    .back-link:hover { transform: rotate(-1deg) translate(-1px,-1px); box-shadow: 4px 4px 0 var(--ink); }
+
+    /* === HERO === */
+    .hero { text-align: center; padding: 8px 12px 4px; }
+    .hero h1 {
+      font-size: clamp(2rem, 6vw, 3.6rem);
+      line-height: 0.95;
+      letter-spacing: -1px;
+      color: var(--ink);
+      text-shadow: 4px 4px 0 var(--cream-light), 5px 5px 0 var(--ink);
+      margin: 10px 0 14px;
+      transform: rotate(-1.5deg);
+    }
+    .hero .sub {
+      font-size: clamp(0.95rem, 2.2vw, 1.15rem);
+      max-width: 560px;
+      margin: 0 auto 8px;
+      line-height: 1.4;
+      color: var(--ink-soft);
+    }
+
+    /* crude padlock doodle */
+    .vault-lock { width: 96px; height: auto; margin: 0 auto; display: block; }
+
+    /* === CARD BASE (same as landing) === */
+    .card {
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 28px 24px;
+      margin: 36px 0;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%) rotate(-3deg);
+      width: 80px;
+      height: 22px;
+      background: rgba(255,255,200,0.7);
+      border: 1px dashed rgba(0,0,0,0.25);
+    }
+    .card.tilt-l { transform: rotate(-1.2deg); }
+    .card.tilt-r { transform: rotate(1.3deg); }
+    .card.tilt-xl { transform: rotate(-2deg); }
+    .card h2 {
+      font-size: clamp(1.4rem, 3.6vw, 2rem);
+      margin-bottom: 14px;
+      transform: rotate(-0.6deg);
+    }
+
+    /* === TOTALS === */
+    .totals { text-align: center; }
+    .totals .big-num {
+      font-family: var(--font-mono);
+      font-weight: bold;
+      font-size: clamp(2rem, 7vw, 3.4rem);
+      background: var(--yellow);
+      border: 3px solid var(--ink);
+      box-shadow: var(--shadow);
+      display: inline-block;
+      padding: 8px 22px;
+      transform: rotate(-1deg);
+      margin: 6px 0 4px;
+      word-break: break-word;
+    }
+    .totals .big-lbl { font-size: 1.05rem; margin-bottom: 20px; }
+
+    .stat-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 14px;
+      margin-top: 8px;
+    }
+    .stat {
+      background: var(--cream-light);
+      border: 3px solid var(--ink);
+      box-shadow: var(--shadow);
+      padding: 10px 16px;
+      min-width: 130px;
+    }
+    .stat:nth-child(odd)  { transform: rotate(-1.2deg); }
+    .stat:nth-child(even) { transform: rotate(1.1deg); }
+    .stat .num {
+      font-family: var(--font-mono);
+      font-weight: bold;
+      font-size: 1.35rem;
+      display: block;
+    }
+    .stat .lbl { font-size: 0.85rem; }
+
+    .as-of {
+      margin-top: 18px;
+      font-size: 0.8rem;
+      opacity: 0.75;
+    }
+    .refresh-btn {
+      font-family: var(--font-main);
+      font-size: 0.95rem;
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      box-shadow: var(--shadow);
+      padding: 6px 16px;
+      cursor: pointer;
+      margin-top: 12px;
+      transform: rotate(0.8deg);
+    }
+    .refresh-btn:hover { transform: rotate(0.8deg) translate(-1px,-1px); box-shadow: 4px 4px 0 var(--ink); }
+    .refresh-btn:active { transform: rotate(0.8deg) translate(2px,2px); box-shadow: 1px 1px 0 var(--ink); }
+
+    /* === LOADING / ERROR / EMPTY === */
+    .state-box { text-align: center; padding: 26px 10px; font-size: 1.1rem; }
+    .state-box .bear {
+      width: 74px; height: 74px; margin: 0 auto 10px; display: block;
+      animation: bob 1.2s ease-in-out infinite;
+    }
+    @keyframes bob { 0%,100% { transform: translateY(0) rotate(-3deg);} 50% { transform: translateY(-8px) rotate(3deg);} }
+    .state-box.is-error { color: var(--red-troll); }
+    .hidden { display: none !important; }
+
+    /* === LOCK LIST === */
+    .lock-item {
+      border: 3px solid var(--ink);
+      background: var(--cream-light);
+      box-shadow: var(--shadow);
+      padding: 18px 16px 16px;
+      margin: 22px 0;
+      position: relative;
+    }
+    .lock-item:nth-child(odd)  { transform: rotate(-0.7deg); }
+    .lock-item:nth-child(even) { transform: rotate(0.7deg); }
+
+    .lock-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .lock-name { font-size: 1.15rem; font-weight: bold; }
+    .badge {
+      font-size: 0.8rem;
+      border: 2px solid var(--ink);
+      padding: 2px 10px;
+      box-shadow: 2px 2px 0 var(--ink);
+      transform: rotate(-2deg);
+      white-space: nowrap;
+    }
+    .badge.locked    { background: var(--green-ok); }
+    .badge.unlocked  { background: var(--yellow); }
+    .badge.claimed   { background: var(--muzzle); }
+    .badge.cancelled { background: var(--mouth-pink); }
+
+    /* crude progress bar */
+    .bar-wrap { margin: 10px 0 6px; }
+    .bar {
+      height: 26px;
+      border: 3px solid var(--ink);
+      background: var(--paper);
+      position: relative;
+      transform: rotate(-0.4deg);
+      overflow: hidden;
+    }
+    .bar-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      background: repeating-linear-gradient(
+        45deg,
+        var(--brown) 0 10px,
+        var(--brown-dark) 10px 20px
+      );
+      border-right: 3px solid var(--ink);
+      min-width: 0;
+      transition: width 0.6s ease;
+    }
+    .bar-lbl { font-size: 0.85rem; margin-top: 5px; }
+
+    .lock-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px 14px;
+      margin: 12px 0;
+      font-size: 0.92rem;
+    }
+    .lock-grid .k { opacity: 0.75; font-size: 0.8rem; display: block; }
+    .lock-grid .v { font-family: var(--font-mono); font-weight: bold; word-break: break-word; }
+
+    .lock-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .lock-link {
+      font-size: 0.85rem;
+      color: var(--ink);
+      text-decoration: none;
+      background: var(--paper);
+      border: 2px solid var(--ink);
+      box-shadow: 2px 2px 0 var(--ink);
+      padding: 4px 10px;
+    }
+    .lock-link:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
+    .lock-sched { font-size: 0.85rem; opacity: 0.85; margin-left: auto; }
+
+    /* === FOOTER === */
+    footer {
+      text-align: center;
+      margin-top: 60px;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      opacity: 0.85;
+    }
+    footer .grin { font-size: 2rem; margin-bottom: 6px; }
+    footer a { color: var(--ink); }
+
+    @media (max-width: 520px) {
+      .card { padding: 22px 14px; }
+      .lock-sched { margin-left: 0; width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .state-box .bear { animation: none; }
+      .bar-fill { transition: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <a class="back-link" href="/">&larr; back 2 da grin</a>
+
+  <!-- HERO -->
+  <section class="hero">
+    <!-- crude ms paint padlock -->
+    <svg class="vault-lock" viewBox="0 0 100 110" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M 30 45 L 29 26 Q 30 8 50 9 Q 71 8 70 27 L 71 45"
+            fill="none" stroke="#1a1a1a" stroke-width="7" stroke-linecap="round"/>
+      <rect x="17" y="44" width="66" height="56" rx="5"
+            fill="#ffe066" stroke="#1a1a1a" stroke-width="5" transform="rotate(-1.5 50 72)"/>
+      <circle cx="50" cy="68" r="8" fill="#1a1a1a"/>
+      <rect x="46" y="70" width="8" height="16" rx="3" fill="#1a1a1a" transform="rotate(2 50 78)"/>
+    </svg>
+
+    <h1>da benis vault<br>:DDD</h1>
+    <p class="sub">evry $spurdo lock on streamflow pulled live from da chain — no trust jus verify :D</p>
+  </section>
+
+  <!-- TOTALS -->
+  <section class="card tilt-xl totals" id="totalsCard">
+    <h2>how much benis iz locked</h2>
+
+    <div class="state-box" id="totalsLoading">
+      <svg class="bear" viewBox="0 0 40 40" aria-hidden="true">
+        <ellipse cx="20" cy="22" rx="15" ry="13" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <path d="M 12 10 Q 14 6 16 10" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <path d="M 24 10 Q 26 6 28 10" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <circle cx="15" cy="20" r="1.8" fill="#1a1a1a"/>
+        <circle cx="25" cy="20" r="1.8" fill="#1a1a1a"/>
+        <ellipse cx="17" cy="27" rx="4" ry="2" fill="#eacf94" stroke="#1a1a1a" stroke-width="1" transform="rotate(-12 17 27)"/>
+        <ellipse cx="23" cy="27" rx="4" ry="2" fill="#eacf94" stroke="#1a1a1a" stroke-width="1" transform="rotate(12 23 27)"/>
+        <ellipse cx="20" cy="26" rx="1.8" ry="1.4" fill="#1a1a1a"/>
+      </svg>
+      asking da chain about da benis...
+    </div>
+
+    <div class="state-box is-error hidden" id="totalsError">
+      da chain no talk 2 us rite now :D<br>
+      <button class="refresh-btn" type="button" onclick="loadAll()">try again :D</button>
+    </div>
+
+    <div class="hidden" id="totalsBody">
+      <div class="big-num" id="totalLocked">0</div>
+      <div class="big-lbl">$spurdo locked rite now</div>
+
+      <div class="stat-row">
+        <div class="stat"><span class="num" id="statDeposited">–</span><span class="lbl">total deposited</span></div>
+        <div class="stat"><span class="num" id="statUnlocked">–</span><span class="lbl">unlocked so far</span></div>
+        <div class="stat"><span class="num" id="statClaimed">–</span><span class="lbl">claimed</span></div>
+        <div class="stat"><span class="num" id="statPct">–</span><span class="lbl">of total suply locked</span></div>
+      </div>
+
+      <div class="as-of" id="asOf"></div>
+      <button class="refresh-btn" type="button" onclick="loadAll()">refresh :D</button>
+    </div>
+  </section>
+
+  <!-- LOCK LIST -->
+  <section class="card tilt-r" id="locksCard">
+    <h2>da locks</h2>
+
+    <div class="state-box hidden" id="locksEmpty">
+      no benis in da vault yet :D<br>
+      da first lock iz coming — see da timer on da <a href="/">front page</a>
+    </div>
+
+    <div id="lockList"></div>
+  </section>
+
+  <footer>
+    <div class="grin">:DDD</div>
+    numbers come strait from solana + streamflow<br>
+    if dis page and da chain disagree da chain iz rite<br>
+    <a href="/">back 2 spurdo</a><br><br>
+    &copy; 2008 spurdo sp&auml;rde
+  </footer>
+
+</div>
+
+<script>
+  /* === KONFIGURASHUN ==========================================
+     everything u might want to change lives here
+     ============================================================ */
+  const MINT               = '991L48va9rMiysu3fCpeg5p9bN4NLzhujojzmFtkgacE';
+  const TICKER             = '$spurdo';
+  const LOCK_SENDER        = 'ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd'; // benis multisig (api fallback filter)
+  const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
+  const STREAMFLOW_API     = 'https://api-public.streamflow.finance';
+  const RPC_URLS = [
+    'https://solana-rpc.publicnode.com',
+    'https://api.mainnet-beta.solana.com',
+    'https://solana.drpc.org',
+  ];
+
+  /* === streamflow contract account layout offsets (v: js-sdk) ===
+     withdrawn 17 | canceled_at 25 | end 33 | sender 49 | recipient 113
+     mint 177 | start 409 | deposited 417 | period 425 | per_period 433
+     cliff 441 | cliff_amount 449 | name 463(64) | closed 671            */
+  const OFF = {
+    withdrawn: 17, canceledAt: 25, end: 33,
+    start: 409, deposited: 417, period: 425,
+    perPeriod: 433, cliff: 441, cliffAmount: 449,
+    name: 463, closed: 671,
+  };
+
+  let DECIMALS = 6;        // corrected from getTokenSupply
+  let SUPPLY_UI = null;    // total token supply (ui units)
+
+  /* ---------- helpers ---------- */
+  const $ = (id) => document.getElementById(id);
+
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function u64(dv, off) { return dv.getBigUint64(off, true); }
+
+  function toUi(big) { return Number(big) / Math.pow(10, DECIMALS); }
+
+  function fmtAmt(n) {
+    if (!isFinite(n)) return '–';
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.00$/, '') + 'b';
+    if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.00$/, '') + 'm';
+    if (n >= 1e3) return Math.round(n).toLocaleString('en-US');
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+
+  function fmtDate(sec) {
+    if (!sec) return '–';
+    return new Date(sec * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function fmtIn(sec) {
+    let s = Math.max(0, sec);
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600);  s -= h * 3600;
+    const m = Math.floor(s / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+  }
+
+  function humanPeriod(sec) {
+    if (sec >= 2419200) return 'moon';   // ~28d+
+    if (sec >= 604800)  return 'week';
+    if (sec >= 86400)   return 'day';
+    if (sec >= 3600)    return 'hour';
+    return 'tick';
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  /* ---------- unlock math ----------
+     unlocked(t) = 0                                   t < cliff
+                 = cliff_amount + floor((t-cliff)/period)*per_period   after
+     capped at deposited. cancelled contracts stop at withdrawn. */
+  function unlockedAt(lock, tSec) {
+    if (lock.canceledAt > 0) return lock.withdrawn;
+    if (tSec < lock.cliff) return 0n;
+    let out = lock.cliffAmount;
+    if (lock.period > 0 && lock.perPeriod > 0n) {
+      const ticks = BigInt(Math.floor((tSec - lock.cliff) / lock.period));
+      out += ticks * lock.perPeriod;
+    }
+    return out > lock.deposited ? lock.deposited : out;
+  }
+
+  function nextUnlock(lock, tSec) {
+    if (lock.canceledAt > 0) return null;
+    if (unlockedAt(lock, tSec) >= lock.deposited) return null;
+    if (tSec < lock.cliff) return lock.cliff;
+    if (lock.period <= 0) return null;
+    const ticks = Math.floor((tSec - lock.cliff) / lock.period);
+    return lock.cliff + (ticks + 1) * lock.period;
+  }
+
+  /* ---------- rpc plumbing ---------- */
+  async function rpcCall(method, params) {
+    let lastErr = new Error('no rpc');
+    for (const url of RPC_URLS) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 9000);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+        if (!res.ok) throw new Error('rpc ' + res.status);
+        const json = await res.json();
+        if (json.error) throw new Error(json.error.message || 'rpc error');
+        return json.result;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr;
+  }
+
+  async function fetchSupply() {
+    const r = await rpcCall('getTokenSupply', [MINT]);
+    DECIMALS = r.value.decimals;
+    SUPPLY_UI = Number(r.value.uiAmountString || r.value.uiAmount);
+  }
+
+  /* primary: read locks strait from the chain */
+  async function fetchLocksRpc() {
+    const result = await rpcCall('getProgramAccounts', [
+      STREAMFLOW_PROGRAM,
+      {
+        encoding: 'base64',
+        commitment: 'confirmed',
+        filters: [{ memcmp: { offset: 177, bytes: MINT } }],
+      },
+    ]);
+    const locks = [];
+    for (const acc of result || []) {
+      try {
+        const bytes = b64ToBytes(acc.account.data[0]);
+        if (bytes.length < 680) continue;
+        const dv = new DataView(bytes.buffer);
+        const nameBytes = bytes.slice(OFF.name, OFF.name + 64);
+        const name = new TextDecoder().decode(nameBytes).replace(/\u0000/g, '').trim();
+        locks.push({
+          address: acc.pubkey,
+          name,
+          deposited:   u64(dv, OFF.deposited),
+          withdrawn:   u64(dv, OFF.withdrawn),
+          cliffAmount: u64(dv, OFF.cliffAmount),
+          perPeriod:   u64(dv, OFF.perPeriod),
+          start:      Number(u64(dv, OFF.start)),
+          end:        Number(u64(dv, OFF.end)),
+          cliff:      Number(u64(dv, OFF.cliff)),
+          period:     Number(u64(dv, OFF.period)),
+          canceledAt: Number(u64(dv, OFF.canceledAt)),
+          closed:     bytes[OFF.closed] === 1,
+        });
+      } catch (e) { /* skip weird account */ }
+    }
+    return locks;
+  }
+
+  /* fallback: streamflow public api filtered by da multisig sender */
+  async function fetchLocksApi() {
+    const url = STREAMFLOW_API + '/v2/api/contracts/tabularium/?sender=' + encodeURIComponent(LOCK_SENDER);
+    const res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    if (!res.ok) throw new Error('api ' + res.status);
+    const rows = await res.json();
+    const toSec = (iso) => iso ? Math.floor(new Date(iso).getTime() / 1000) : 0;
+    return (rows || [])
+      .filter(r => r.mint === MINT)
+      .map(r => ({
+        address: r.address,
+        name: r.name || '',
+        deposited:   BigInt(r.amount || '0'),
+        withdrawn:   BigInt(r.claimedAmount || '0'),
+        cliffAmount: BigInt(r.cliffAmount || '0'),
+        perPeriod:   BigInt(r.amountPerPeriod || '0'),
+        start:  toSec(r.startDt),
+        end:    toSec(r.endDt),
+        cliff:  toSec(r.startDt),   // api has no cliff ts; start ≈ cliff for our locks
+        period: Number(r.period || 0),
+        canceledAt: toSec(r.canceledDt),
+        closed: !!r.isClosed,
+      }));
+  }
+
+  /* ---------- render ---------- */
+  function statusOf(lock, now) {
+    const unlocked = unlockedAt(lock, now);
+    if (lock.canceledAt > 0) return { cls: 'cancelled', txt: 'cancelld >:(' };
+    if (unlocked >= lock.deposited) {
+      return lock.withdrawn >= lock.deposited
+        ? { cls: 'claimed', txt: 'all claimed :|' }
+        : { cls: 'unlocked', txt: 'fully unlocked :D' };
+    }
+    return { cls: 'locked', txt: 'locked :DDD' };
+  }
+
+  function scheduleText(lock) {
+    if (lock.deposited === 0n) return '';
+    if (lock.perPeriod === 0n || lock.period === 0 || lock.cliffAmount >= lock.deposited) {
+      return 'all unlocks at once on ' + fmtDate(lock.end);
+    }
+    const pct = Number((lock.perPeriod * 10000n) / lock.deposited) / 100;
+    return pct + '% unlocks evry ' + humanPeriod(lock.period);
+  }
+
+  function renderLocks(locks) {
+    const now = Math.floor(Date.now() / 1000);
+    const list = $('lockList');
+    list.innerHTML = '';
+    $('locksEmpty').classList.toggle('hidden', locks.length > 0);
+
+    locks.sort((a, b) => b.start - a.start);
+
+    for (const lock of locks) {
+      const unlocked = unlockedAt(lock, now);
+      const stillLocked = lock.deposited > unlocked ? lock.deposited - unlocked : 0n;
+      const pctUnlocked = lock.deposited > 0n ? Number((unlocked * 1000n) / lock.deposited) / 10 : 0;
+      const st = statusOf(lock, now);
+      const nxt = nextUnlock(lock, now);
+
+      const el = document.createElement('div');
+      el.className = 'lock-item';
+      el.innerHTML =
+        '<div class="lock-head">' +
+          '<span class="lock-name">' + esc(lock.name || 'benis lock') + '</span>' +
+          '<span class="badge ' + st.cls + '">' + st.txt + '</span>' +
+        '</div>' +
+        '<div class="bar-wrap">' +
+          '<div class="bar"><div class="bar-fill" style="width:' + Math.min(100, pctUnlocked) + '%;' + (pctUnlocked <= 0 ? 'display:none;' : '') + '"></div></div>' +
+          '<div class="bar-lbl">' + pctUnlocked.toFixed(1) + '% unlocked — ' + fmtAmt(toUi(stillLocked)) + ' still locked</div>' +
+        '</div>' +
+        '<div class="lock-grid">' +
+          '<div><span class="k">deposited</span><span class="v">' + fmtAmt(toUi(lock.deposited)) + '</span></div>' +
+          '<div><span class="k">unlocked so far</span><span class="v">' + fmtAmt(toUi(unlocked)) + '</span></div>' +
+          '<div><span class="k">claimed</span><span class="v">' + fmtAmt(toUi(lock.withdrawn)) + '</span></div>' +
+          '<div><span class="k">locked on</span><span class="v">' + fmtDate(lock.start) + '</span></div>' +
+          '<div><span class="k">fully unlocked</span><span class="v">' + fmtDate(lock.end) + '</span></div>' +
+          '<div><span class="k">next unlock</span><span class="v">' + (nxt ? 'in ' + fmtIn(nxt - now) : '–') + '</span></div>' +
+        '</div>' +
+        '<div class="lock-foot">' +
+          '<a class="lock-link" target="_blank" rel="noopener" href="https://app.streamflow.finance/contract/solana/mainnet/' + esc(lock.address) + '">streamflow &nearr;</a>' +
+          '<a class="lock-link" target="_blank" rel="noopener" href="https://solscan.io/account/' + esc(lock.address) + '">solscan &nearr;</a>' +
+          '<span class="lock-sched">' + esc(scheduleText(lock)) + '</span>' +
+        '</div>';
+      list.appendChild(el);
+    }
+  }
+
+  function renderTotals(locks) {
+    const now = Math.floor(Date.now() / 1000);
+    let deposited = 0n, unlocked = 0n, claimed = 0n, stillLocked = 0n;
+    for (const lock of locks) {
+      if (lock.canceledAt > 0) continue;   // cancelld locks dont count
+      const u = unlockedAt(lock, now);
+      deposited += lock.deposited;
+      unlocked  += u;
+      claimed   += lock.withdrawn;
+      stillLocked += lock.deposited > u ? lock.deposited - u : 0n;
+    }
+    $('totalLocked').textContent   = fmtAmt(toUi(stillLocked));
+    $('statDeposited').textContent = fmtAmt(toUi(deposited));
+    $('statUnlocked').textContent  = fmtAmt(toUi(unlocked));
+    $('statClaimed').textContent   = fmtAmt(toUi(claimed));
+    $('statPct').textContent = (SUPPLY_UI && SUPPLY_UI > 0)
+      ? ((toUi(stillLocked) / SUPPLY_UI) * 100).toFixed(2) + '%'
+      : '–';
+    $('asOf').textContent = 'as of ' + new Date().toLocaleString('en-US');
+  }
+
+  /* ---------- boot ---------- */
+  let CURRENT_LOCKS = [];
+
+  async function loadAll() {
+    $('totalsLoading').classList.remove('hidden');
+    $('totalsError').classList.add('hidden');
+    $('totalsBody').classList.add('hidden');
+    $('locksEmpty').classList.add('hidden');
+    $('lockList').innerHTML = '';
+
+    try { await fetchSupply(); } catch (e) { /* pct just shows – */ }
+
+    let locks = null;
+    try { locks = await fetchLocksRpc(); }
+    catch (e) {
+      try { locks = await fetchLocksApi(); } catch (e2) { locks = null; }
+    }
+
+    if (locks === null) {
+      $('totalsLoading').classList.add('hidden');
+      $('totalsError').classList.remove('hidden');
+      return;
+    }
+
+    CURRENT_LOCKS = locks;
+    renderTotals(locks);
+    renderLocks(locks);
+    $('totalsLoading').classList.add('hidden');
+    $('totalsBody').classList.remove('hidden');
+  }
+
+  // keep countdowns fresh without refetching
+  setInterval(() => {
+    if (CURRENT_LOCKS.length) { renderTotals(CURRENT_LOCKS); renderLocks(CURRENT_LOCKS); }
+  }, 30000);
+
+  loadAll();
+</script>
+</body>
+</html>

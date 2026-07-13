@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
         source: "/",
         destination: "/landing.html",
       },
+      {
+        source: "/revshare",
+        destination: "/revshare.html",
+      },
     ];
   },
 };
