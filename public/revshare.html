@@ -284,6 +284,31 @@
     .lock-link:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
     .lock-sched { font-size: 0.85rem; opacity: 0.85; margin-left: auto; }
 
+    /* === CONTRIBUTOR TABLE === */
+    .ctable-wrap { overflow-x: auto; }
+    .ctable {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      transform: rotate(-0.3deg);
+    }
+    .ctable th, .ctable td {
+      border: 2px solid var(--ink);
+      padding: 7px 9px;
+      text-align: right;
+      background: var(--paper);
+      white-space: nowrap;
+    }
+    .ctable th {
+      background: var(--yellow);
+      font-family: var(--font-main);
+      font-size: 0.85rem;
+    }
+    .ctable th:nth-child(-n+2), .ctable td:nth-child(-n+2) { text-align: left; }
+    .ctable a { color: var(--ink); }
+    .ctable tr:first-child td { background: var(--cream-light); }
+
     /* === FOOTER === */
     footer {
       text-align: center;
@@ -378,6 +403,53 @@
     <div id="lockList"></div>
   </section>
 
+  <!-- CONTRIBUTORS -->
+  <section class="card tilt-l" id="contribCard">
+    <h2>who gave benis :DDD</h2>
+    <p style="margin-bottom: 6px; font-size: 0.9rem;">evry wallet dat deposited $spurdo into da treasury — read strait from da chain</p>
+
+    <div class="state-box" id="contribLoading">
+      <svg class="bear" viewBox="0 0 40 40" aria-hidden="true">
+        <ellipse cx="20" cy="22" rx="15" ry="13" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <path d="M 12 10 Q 14 6 16 10" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <path d="M 24 10 Q 26 6 28 10" fill="#8b5a3c" stroke="#1a1a1a" stroke-width="2"/>
+        <circle cx="15" cy="20" r="1.8" fill="#1a1a1a"/>
+        <circle cx="25" cy="20" r="1.8" fill="#1a1a1a"/>
+        <ellipse cx="17" cy="27" rx="4" ry="2" fill="#eacf94" stroke="#1a1a1a" stroke-width="1" transform="rotate(-12 17 27)"/>
+        <ellipse cx="23" cy="27" rx="4" ry="2" fill="#eacf94" stroke="#1a1a1a" stroke-width="1" transform="rotate(12 23 27)"/>
+        <ellipse cx="20" cy="26" rx="1.8" ry="1.4" fill="#1a1a1a"/>
+      </svg>
+      reading da chain... <span id="cprog" style="font-family:var(--font-mono);font-size:0.85rem;"></span>
+    </div>
+
+    <div class="state-box is-error hidden" id="contribError">
+      couldnt read da treasury history — public rpc said no :D<br>
+      <span style="font-size:0.85rem;">try again or add ur own rpc wit <span style="font-family:var(--font-mono)">?rpc=</span></span><br>
+      <button class="refresh-btn" type="button" onclick="loadContribs()">try again :D</button>
+    </div>
+
+    <div class="state-box hidden" id="contribEmpty">nobody gave benis yet :D</div>
+
+    <div class="hidden" id="contribBody">
+      <div class="stat-row" style="margin-bottom: 18px;">
+        <div class="stat"><span class="num" id="cPool">–</span><span class="lbl">total contributed</span></div>
+        <div class="stat"><span class="num" id="cCount">–</span><span class="lbl">contributor wallets</span></div>
+        <div class="stat"><span class="num" id="cSent">–</span><span class="lbl">moved 2 dev 4 locking</span></div>
+      </div>
+
+      <div class="ctable-wrap">
+        <table class="ctable">
+          <thead>
+            <tr><th>#</th><th>wallet</th><th>deposited</th><th>share</th><th>deposits</th><th>last</th><th>revshare paid</th></tr>
+          </thead>
+          <tbody id="cRows"></tbody>
+        </table>
+      </div>
+
+      <button class="refresh-btn" type="button" onclick="downloadCsv()">download csv :D</button>
+    </div>
+  </section>
+
   <footer>
     <div class="grin">:DDD</div>
     numbers come strait from solana + streamflow<br>
@@ -394,7 +466,11 @@
      ============================================================ */
   const MINT               = '991L48va9rMiysu3fCpeg5p9bN4NLzhujojzmFtkgacE';
   const TICKER             = '$spurdo';
-  const LOCK_SENDER        = 'ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd'; // benis multisig (api fallback filter)
+  const TREASURY           = 'ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd'; // benis multisig — contributors deposit here
+  const DEV_WALLET         = 'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV'; // moves treasury benis into streamflow locks
+  const REVSHARE_WALLET    = 'Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ'; // pays monthly revshare out
+  const LOCK_SENDERS       = [DEV_WALLET, TREASURY];                          // api fallback filters
+  const INTERNAL_WALLETS   = [TREASURY, DEV_WALLET, REVSHARE_WALLET];         // not contributors
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAMFLOW_API     = 'https://api-public.streamflow.finance';
   const RPC_URLS = [
@@ -505,12 +581,14 @@
   }
 
   /* ---------- rpc plumbing ---------- */
+  let GOOD_RPC = null; // sticky: first endpoint dat answers keeps da job
   async function rpcCall(method, params) {
     let lastErr = new Error('no rpc');
-    for (const url of RPC_URLS) {
+    const order = GOOD_RPC ? [GOOD_RPC, ...RPC_URLS.filter(u => u !== GOOD_RPC)] : RPC_URLS;
+    for (const url of order) {
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 9000);
+        const t = setTimeout(() => ctrl.abort(), 12000);
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -521,8 +599,9 @@
         if (!res.ok) throw new Error('rpc ' + res.status);
         const json = await res.json();
         if (json.error) throw new Error(json.error.message || 'rpc error');
+        GOOD_RPC = url;
         return json.result;
-      } catch (e) { lastErr = e; }
+      } catch (e) { lastErr = e; if (url === GOOD_RPC) GOOD_RPC = null; }
     }
     throw lastErr;
   }
@@ -570,13 +649,14 @@
     return locks;
   }
 
-  /* streamflow public api — locks can be sent from or 2 da multisig so ask both ways */
+  /* streamflow public api — lock could be from dev wallet or treasury so ask evry way */
   async function fetchLocksApi() {
     const base = STREAMFLOW_API + '/v2/api/contracts/tabularium/?';
-    const urls = [
-      base + 'sender=' + encodeURIComponent(LOCK_SENDER),
-      base + 'recipient=' + encodeURIComponent(LOCK_SENDER),
-    ];
+    const urls = [];
+    for (const w of LOCK_SENDERS) {
+      urls.push(base + 'sender=' + encodeURIComponent(w));
+      urls.push(base + 'recipient=' + encodeURIComponent(w));
+    }
     const settled = await Promise.allSettled(urls.map(u =>
       fetch(u, { headers: { 'Content-Type': 'application/json' } })
         .then(r => { if (!r.ok) throw new Error('api ' + r.status); return r.json(); })
@@ -607,6 +687,184 @@
       }));
   }
 
+  /* ---------- contributor scan ----------
+     read evry $spurdo transfer into da treasury token account,
+     aggregate per wallet, cross-check payouts from da revshare wallet */
+
+  async function findAtas(owner) {
+    const r = await rpcCall('getTokenAccountsByOwner', [owner, { mint: MINT }, { encoding: 'jsonParsed' }]);
+    return (r.value || []).map(v => v.pubkey);
+  }
+
+  async function allSigs(addr, cap = 3000) {
+    const out = [];
+    let before;
+    while (out.length < cap) {
+      const opts = before ? { limit: 1000, before } : { limit: 1000 };
+      const batch = await rpcCall('getSignaturesForAddress', [addr, opts]);
+      if (!batch || !batch.length) break;
+      out.push(...batch);
+      if (batch.length < 1000) break;
+      before = batch[batch.length - 1].signature;
+    }
+    return out;
+  }
+
+  function walkTransfers(tx, atas) {
+    const res = { ins: [], outs: [] };
+    if (!tx || !tx.transaction) return res;
+    const groups = [tx.transaction.message.instructions || []];
+    for (const inner of (tx.meta && tx.meta.innerInstructions) || []) groups.push(inner.instructions || []);
+    for (const g of groups) for (const ix of g) {
+      const p = ix.parsed;
+      if (!p || (ix.program !== 'spl-token' && ix.program !== 'spl-token-2022')) continue;
+      if (p.type !== 'transfer' && p.type !== 'transferChecked') continue;
+      const info = p.info || {};
+      if (p.type === 'transferChecked' && info.mint && info.mint !== MINT) continue;
+      const raw = info.amount ?? (info.tokenAmount && info.tokenAmount.amount) ?? '0';
+      let amt; try { amt = BigInt(raw); } catch (e) { continue; }
+      if (amt === 0n) continue;
+      const owner = info.authority || info.multisigAuthority || info.source || '?';
+      if (atas.has(info.destination)) res.ins.push({ owner, amount: amt });
+      else if (atas.has(info.source)) res.outs.push({ dest: info.destination, amount: amt });
+    }
+    return res;
+  }
+
+  async function scanWallet(owner, label, onProgress) {
+    const atas = new Set(await findAtas(owner));
+    if (!atas.size) return { ins: [], outs: [] };
+    const ins = [], outs = [];
+    for (const ata of atas) {
+      const sigs = (await allSigs(ata)).filter(s => !s.err);
+      const CONC = 4;
+      for (let i = 0; i < sigs.length; i += CONC) {
+        const chunk = sigs.slice(i, i + CONC);
+        const txs = await Promise.all(chunk.map(s =>
+          rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => null)));
+        txs.forEach((tx, j) => {
+          const t = walkTransfers(tx, atas);
+          const bt = chunk[j].blockTime || (tx && tx.blockTime) || 0;
+          for (const x of t.ins)  ins.push({ ...x, time: bt, sig: chunk[j].signature });
+          for (const x of t.outs) outs.push({ ...x, time: bt, sig: chunk[j].signature });
+        });
+        if (onProgress) onProgress(label, Math.min(i + CONC, sigs.length), sigs.length);
+        await new Promise(r => setTimeout(r, 220));
+      }
+    }
+    return { ins, outs };
+  }
+
+  async function ownersOf(ataSet) {
+    const map = {};
+    const list = [...ataSet];
+    for (let i = 0; i < list.length; i += 100) {
+      const chunk = list.slice(i, i + 100);
+      const r = await rpcCall('getMultipleAccounts', [chunk, { encoding: 'jsonParsed' }]).catch(() => null);
+      ((r && r.value) || []).forEach((acc, j) => {
+        const own = acc && acc.data && acc.data.parsed && acc.data.parsed.info && acc.data.parsed.info.owner;
+        map[chunk[j]] = own || chunk[j];
+      });
+    }
+    return map;
+  }
+
+  let CONTRIB_ROWS = [];
+  let CONTRIB_BUSY = false;
+
+  async function loadContribs() {
+    if (CONTRIB_BUSY) return;
+    CONTRIB_BUSY = true;
+    const prog = $('cprog');
+    const onP = (label, d, t) => { prog.textContent = label + ' tx ' + d + '/' + t; };
+    try {
+      $('contribLoading').classList.remove('hidden');
+      $('contribBody').classList.add('hidden');
+      $('contribError').classList.add('hidden');
+      $('contribEmpty').classList.add('hidden');
+
+      const tre = await scanWallet(TREASURY, 'treasury', onP);
+      const rev = await scanWallet(REVSHARE_WALLET, 'revshare', onP);
+
+      // map payouts back 2 contributor wallets
+      const destAtas = new Set(rev.outs.map(o => o.dest));
+      const ownerMap = destAtas.size ? await ownersOf(destAtas) : {};
+      const paid = new Map();
+      for (const o of rev.outs) {
+        const w = ownerMap[o.dest] || o.dest;
+        paid.set(w, (paid.get(w) || 0n) + o.amount);
+      }
+
+      // aggregate deposits, internal wallets dont count
+      const agg = new Map();
+      for (const d of tre.ins) {
+        if (d.owner === '?' || INTERNAL_WALLETS.includes(d.owner)) continue;
+        const a = agg.get(d.owner) || { total: 0n, n: 0, first: d.time, last: d.time };
+        a.total += d.amount; a.n++;
+        if (d.time && (!a.first || d.time < a.first)) a.first = d.time;
+        if (d.time > a.last) a.last = d.time;
+        agg.set(d.owner, a);
+      }
+      let pool = 0n; for (const a of agg.values()) pool += a.total;
+      let sent2dev = 0n; for (const o of tre.outs) sent2dev += o.amount;
+
+      CONTRIB_ROWS = [...agg.entries()].map(([w, a]) => ({
+        wallet: w, total: a.total, n: a.n, first: a.first, last: a.last,
+        paid: paid.get(w) || 0n,
+        pct: pool > 0n ? Number(a.total * 10000n / pool) / 100 : 0,
+      })).sort((x, y) => (y.total > x.total ? 1 : y.total < x.total ? -1 : 0));
+
+      renderContribs(CONTRIB_ROWS, pool, sent2dev);
+      $('contribLoading').classList.add('hidden');
+      $('contribBody').classList.remove('hidden');
+    } catch (e) {
+      console.warn('contrib scan failed:', e);
+      $('contribLoading').classList.add('hidden');
+      $('contribError').classList.remove('hidden');
+    } finally {
+      CONTRIB_BUSY = false;
+    }
+  }
+
+  function shortW(w) { return w.slice(0, 4) + '\u2026' + w.slice(-4); }
+
+  function renderContribs(rows, pool, sent2dev) {
+    $('cPool').textContent  = fmtAmt(toUi(pool));
+    $('cCount').textContent = rows.length;
+    $('cSent').textContent  = fmtAmt(toUi(sent2dev));
+    const tb = $('cRows');
+    tb.innerHTML = '';
+    rows.forEach((r, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + (i + 1) + '</td>' +
+        '<td><a href="https://solscan.io/account/' + esc(r.wallet) + '" target="_blank" rel="noopener" title="' + esc(r.wallet) + '">' + esc(shortW(r.wallet)) + '</a></td>' +
+        '<td>' + fmtAmt(toUi(r.total)) + '</td>' +
+        '<td>' + r.pct.toFixed(2) + '%</td>' +
+        '<td>' + r.n + '</td>' +
+        '<td>' + fmtDate(r.last) + '</td>' +
+        '<td>' + (r.paid > 0n ? fmtAmt(toUi(r.paid)) : '\u2013') + '</td>';
+      tb.appendChild(tr);
+    });
+    $('contribEmpty').classList.toggle('hidden', rows.length > 0);
+  }
+
+  function downloadCsv() {
+    const head = 'wallet,deposited,share_pct,deposits,first_deposit,last_deposit,revshare_paid\n';
+    const lines = CONTRIB_ROWS.map(r => [
+      r.wallet, toUi(r.total), r.pct.toFixed(4), r.n,
+      r.first ? new Date(r.first * 1000).toISOString() : '',
+      r.last ? new Date(r.last * 1000).toISOString() : '',
+      toUi(r.paid),
+    ].join(','));
+    const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'spurdo-contributors.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   /* ---------- render ---------- */
   function statusOf(lock, now) {
     const unlocked = unlockedAt(lock, now);
@@ -621,7 +879,7 @@
 
   function scheduleText(lock) {
     if (lock.deposited === 0n) return '';
-    if (lock.perPeriod === 0n || lock.period === 0 || lock.cliffAmount >= lock.deposited) {
+    if (lock.perPeriod === 0n || lock.period === 0 || lock.cliffAmount >= lock.deposited || lock.perPeriod >= lock.deposited) {
       return 'all unlocks at once on ' + fmtDate(lock.end);
     }
     const pct = Number((lock.perPeriod * 10000n) / lock.deposited) / 100;
@@ -732,6 +990,8 @@
     renderLocks(locks);
     $('totalsLoading').classList.add('hidden');
     $('totalsBody').classList.remove('hidden');
+
+    loadContribs(); // heavy scan runs after da fast numbers r up
   }
 
   // keep countdowns fresh without refetching
