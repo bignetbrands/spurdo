@@ -9,7 +9,7 @@ import { Redis } from "@upstash/redis";
 import { runFullScan, jstr, jparse } from "@/lib/revshare-scan";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const CACHE_KEY = "revshare:data:v2";
 const LOCK_KEY = "revshare:scan-lock";
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
   const redis = r();
   let gotLock = true;
   if (redis) {
-    try { gotLock = (await redis.set(LOCK_KEY, "1", { nx: true, ex: 90 })) !== null; } catch { gotLock = true; }
+    try { gotLock = (await redis.set(LOCK_KEY, "1", { nx: true, ex: 300 })) !== null; } catch { gotLock = true; }
   }
   if (!gotLock) {
     if (cached) return respond(cached, { "X-Revshare-Source": "stale-scan-running" });

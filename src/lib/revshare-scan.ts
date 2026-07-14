@@ -33,9 +33,9 @@ const FAST = () => !!process.env.SOLANA_RPC;
 
 /* ---------- rpc ---------- */
 let GOOD_RPC: string | null = null;
-async function rpcCallAt(url: string, method: string, params: unknown[]): Promise<any> {
+async function rpcCallAt(url: string, method: string, params: unknown[], timeoutMs = 12000): Promise<any> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 15000);
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -136,7 +136,7 @@ async function allSigsAt(url: string, addr: string, cap = 5000): Promise<SigInfo
   let before: string | undefined;
   while (out.length < cap) {
     const opts: Record<string, unknown> = before ? { limit: 1000, before } : { limit: 1000 };
-    const batch: SigInfo[] = await rpcCallAt(url, "getSignaturesForAddress", [addr, opts]);
+    const batch: SigInfo[] = await rpcCallAt(url, "getSignaturesForAddress", [addr, opts], 8000);
     if (!batch || !batch.length) break;
     out.push(...batch);
     if (batch.length < 1000) break;
@@ -144,18 +144,26 @@ async function allSigsAt(url: string, addr: string, cap = 5000): Promise<SigInfo
   }
   return out;
 }
+/* dedicated rpc haz full history — union wit pruned publics only wastes da time budget */
+function sigEndpoints(): string[] {
+  if (FAST()) return [process.env.SOLANA_RPC as string];
+  return rpcUrls();
+}
+const DEAD_NODES = new Map<string, number>(); // url -> fail count (benched at 2)
 async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = 5000): Promise<SigInfo[]> {
-  const eps = [...new Set([GOOD_RPC, ...rpcUrls()].filter(Boolean))] as string[];
-  const lists: (SigInfo[] | null)[] = [];
-  for (const u of eps) {
+  const eps = sigEndpoints().filter((u) => (DEAD_NODES.get(u) || 0) < 2);
+  if (!eps.length) throw new Error("all sig nodes benched");
+  const lists = await Promise.all(eps.map(async (u) => {
     let l: SigInfo[] | null = null;
     for (let attempt = 0; attempt < 2 && l === null; attempt++) {
       try { l = await allSigsAt(u, addr, cap); }
-      catch { if (attempt === 0) await sleep(600); }
+      catch { if (attempt === 0) await sleep(300); }
     }
-    lists.push(l);
+    if (l === null) DEAD_NODES.set(u, (DEAD_NODES.get(u) || 0) + 1);
+    else DEAD_NODES.delete(u);
     nodeStats.push({ node: u.replace(/^https?:\/\//, "").split("/")[0].split(".")[0], n: l === null ? -1 : l.length });
-  }
+    return l;
+  }));
   if (lists.every((l) => l === null)) throw new Error("sig fetch failed for " + addr.slice(0, 6));
   const seen = new Map<string, SigInfo>();
   for (const l of lists) for (const s of l || []) if (!seen.has(s.signature)) seen.set(s.signature, s);
@@ -353,6 +361,7 @@ export type RevshareData = {
 };
 
 export async function runFullScan(): Promise<RevshareData> {
+  const t0 = Date.now();
   let decimals = 6, supplyUi: number | null = null;
   try {
     const r = await rpcCall("getTokenSupply", [MINT]);
@@ -479,7 +488,7 @@ export async function runFullScan(): Promise<RevshareData> {
     ` \u00b7\u00b7 revshare: ${rev.stats.atas} acct \u00b7 ${rev.stats.ok}/${rev.stats.sigs} txs` +
     (rev.stats.fail ? ` (${rev.stats.fail} dropped)` : "") +
     (discoveredAccts.length ? ` \u00b7\u00b7 found ${discoveredAccts.length} old acct` : "") +
-    ` \u00b7\u00b7 ${nodeDiag}`;
+    ` \u00b7\u00b7 ${nodeDiag} \u00b7\u00b7 ${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   return {
     savedAt: Date.now(), rpcConfigured: FAST(), decimals, supplyUi, locks,

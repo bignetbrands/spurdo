@@ -1301,13 +1301,20 @@
       });
     };
     try {
-      const res = await fetch('/api/revshare-data' + (force ? '?force=1' : ''));
+      let res = await fetch('/api/revshare-data' + (force ? '?force=1' : ''));
+      let timedOut = false;
+      if (!res.ok && force) {
+        // fresh scan timed out or errored — grab whatever da server haz cached instead
+        timedOut = true;
+        res = await fetch('/api/revshare-data');
+      }
       if (!res.ok) throw new Error('server ' + res.status);
       const d = jparse(await res.text());
       if (!d || !d.locks) throw new Error('server bad payload');
       // local cache mite be fresher only if it came from a NEWER scan — otherwise server wins
-      if (hadCache && c.scanAt && d.savedAt && d.savedAt <= c.scanAt) return;
+      if (!timedOut && hadCache && c.scanAt && d.savedAt && d.savedAt <= c.scanAt) return;
       adoptServer(d);
+      if (timedOut) $('cSrcLine').textContent += ' \u00b7\u00b7 \u26a0 fresh scan takin too long \u2014 showing last data, try refresh again in a min :D';
       return;
     } catch (e) { console.warn('server data unavailable, browser fallback:', e); }
     if (hadCache && fresh && c.contribRows) return; // server unreachable, fresh local view stays up
