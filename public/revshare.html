@@ -1272,6 +1272,37 @@
       $('lockList').innerHTML = '';
     }
 
+    // primary source: server-side scan (full history nodes, one shared cache 4 all visitors)
+    try {
+      const res = await fetch('/api/revshare-data' + (force ? '?force=1' : ''));
+      if (!res.ok) throw new Error('server ' + res.status);
+      const d = jparse(await res.text());
+      if (!d || !d.locks) throw new Error('server bad payload');
+      DECIMALS = d.decimals ?? DECIMALS;
+      SUPPLY_UI = d.supplyUi ?? null;
+      DATA_TS = d.savedAt || Date.now();
+      DATA_FROM_CACHE = (Date.now() - DATA_TS) > 120000;
+      CURRENT_LOCKS = d.locks;
+      renderTotals(CURRENT_LOCKS);
+      renderLocks(CURRENT_LOCKS);
+      $('srcLine').textContent = d.diagLocks || 'server';
+      $('totalsLoading').classList.add('hidden');
+      $('totalsError').classList.add('hidden');
+      $('totalsBody').classList.remove('hidden');
+      CONTRIB_ROWS = d.contribRows || [];
+      renderContribs(CONTRIB_ROWS, d.pool ?? 0n, d.pendingTotal ?? 0n, d.sent2dev ?? 0n);
+      $('cSrcLine').textContent = d.diagContrib || '';
+      $('contribLoading').classList.add('hidden');
+      $('contribError').classList.add('hidden');
+      $('contribBody').classList.remove('hidden');
+      writeCache({
+        locks: d.locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks: d.diagLocks,
+        contribRows: CONTRIB_ROWS, pool: d.pool, pendingTotal: d.pendingTotal,
+        sent2dev: d.sent2dev, diagContrib: d.diagContrib,
+      });
+      return;
+    } catch (e) { console.warn('server data unavailable, browser fallback:', e); }
+
     try { await fetchSupply(); } catch (e) { console.warn('supply fetch failed', e); }
 
     // ask da chain and da api at da same time, merge, dedupe by address (chain wins)
