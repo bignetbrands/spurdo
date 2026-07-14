@@ -343,6 +343,7 @@ export type ContribRow = {
 };
 export type RevshareData = {
   savedAt: number;
+  rpcConfigured: boolean;
   decimals: number;
   supplyUi: number | null;
   locks: Lock[];
@@ -481,7 +482,7 @@ export async function runFullScan(): Promise<RevshareData> {
     ` \u00b7\u00b7 ${nodeDiag}`;
 
   return {
-    savedAt: Date.now(), decimals, supplyUi, locks,
+    savedAt: Date.now(), rpcConfigured: FAST(), decimals, supplyUi, locks,
     contribRows, pool, pendingTotal, sent2dev,
     diagLocks: "server \u00b7 sources: " + ldiag.join(" \u00b7 "),
     diagContrib,

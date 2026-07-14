@@ -503,7 +503,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v5';
+  const CACHE_KEY = 'spurdo_revshare_v6';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1247,7 +1247,7 @@
       // render instantly from cache — no network
       DECIMALS = c.decimals ?? DECIMALS;
       SUPPLY_UI = c.supplyUi ?? null;
-      DATA_TS = c.savedAt; DATA_FROM_CACHE = true;
+      DATA_TS = c.scanAt || c.savedAt; DATA_FROM_CACHE = true;
       CURRENT_LOCKS = c.locks;
       renderTotals(CURRENT_LOCKS);
       renderLocks(CURRENT_LOCKS);
@@ -1262,8 +1262,9 @@
         $('contribLoading').classList.add('hidden');
         $('contribBody').classList.remove('hidden');
       }
-      if (fresh && c.contribRows) return;   // cache iz young — no fetching at all
-      $('srcLine').textContent = (c.diagLocks || '') + ' \u00b7 refetching\u2026';
+      // always continue 2 da server check below — it's one cheap cached request,
+      // and a newer server scan must beat a pinned local copy
+      if (!fresh) $('srcLine').textContent = (c.diagLocks || '') + ' \u00b7 refetching\u2026';
     } else {
       $('totalsLoading').classList.remove('hidden');
       $('totalsError').classList.add('hidden');
@@ -1273,11 +1274,7 @@
     }
 
     // primary source: server-side scan (full history nodes, one shared cache 4 all visitors)
-    try {
-      const res = await fetch('/api/revshare-data' + (force ? '?force=1' : ''));
-      if (!res.ok) throw new Error('server ' + res.status);
-      const d = jparse(await res.text());
-      if (!d || !d.locks) throw new Error('server bad payload');
+    const adoptServer = (d) => {
       DECIMALS = d.decimals ?? DECIMALS;
       SUPPLY_UI = d.supplyUi ?? null;
       DATA_TS = d.savedAt || Date.now();
@@ -1291,17 +1288,29 @@
       $('totalsBody').classList.remove('hidden');
       CONTRIB_ROWS = d.contribRows || [];
       renderContribs(CONTRIB_ROWS, d.pool ?? 0n, d.pendingTotal ?? 0n, d.sent2dev ?? 0n);
-      $('cSrcLine').textContent = d.diagContrib || '';
+      $('cSrcLine').textContent = (d.diagContrib || '') +
+        (d.rpcConfigured === false ? ' \u00b7\u00b7 \u26a0 no dedicated rpc (set SOLANA_RPC in vercel) \u2014 history may be short' : '');
       $('contribLoading').classList.add('hidden');
       $('contribError').classList.add('hidden');
       $('contribBody').classList.remove('hidden');
       writeCache({
+        scanAt: d.savedAt || Date.now(),
         locks: d.locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks: d.diagLocks,
         contribRows: CONTRIB_ROWS, pool: d.pool, pendingTotal: d.pendingTotal,
-        sent2dev: d.sent2dev, diagContrib: d.diagContrib,
+        sent2dev: d.sent2dev, diagContrib: $('cSrcLine').textContent,
       });
+    };
+    try {
+      const res = await fetch('/api/revshare-data' + (force ? '?force=1' : ''));
+      if (!res.ok) throw new Error('server ' + res.status);
+      const d = jparse(await res.text());
+      if (!d || !d.locks) throw new Error('server bad payload');
+      // local cache mite be fresher only if it came from a NEWER scan — otherwise server wins
+      if (hadCache && c.scanAt && d.savedAt && d.savedAt <= c.scanAt) return;
+      adoptServer(d);
       return;
     } catch (e) { console.warn('server data unavailable, browser fallback:', e); }
+    if (hadCache && fresh && c.contribRows) return; // server unreachable, fresh local view stays up
 
     try { await fetchSupply(); } catch (e) { console.warn('supply fetch failed', e); }
 
@@ -1337,7 +1346,7 @@
     renderLocks(locks);
     $('totalsLoading').classList.add('hidden');
     $('totalsBody').classList.remove('hidden');
-    writeCache({ locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks });
+    writeCache({ scanAt: Date.now(), locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks });
 
     loadContribs(true); // fresh locks → fresh contrib scan, cache gets updated after
   }
