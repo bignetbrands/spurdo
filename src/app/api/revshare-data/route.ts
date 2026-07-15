@@ -9,7 +9,7 @@ import { Redis } from "@upstash/redis";
 import { runFullScan, jstr, jparse } from "@/lib/revshare-scan";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // vercel pro: full-history scan on slow rpc can exceed 60s
 
 const CACHE_KEY = "revshare:data:v1";
 const LOCK_KEY = "revshare:scan-lock";

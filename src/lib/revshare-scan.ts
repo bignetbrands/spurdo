@@ -131,7 +131,11 @@ type SigInfo = { signature: string; blockTime?: number; err?: unknown };
 export type NodeStat = { node: string; n: number };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function allSigsAt(url: string, addr: string, cap = 5000): Promise<SigInfo[]> {
+// paging runs newest→oldest, so hitting da cap silently eats da OLDEST history —
+// exactly da early contributors. dev wallet already sits >5000, so keep headroom
+// n report truncation instead of swallowing it.
+const SIG_CAP = 20000;
+async function allSigsAt(url: string, addr: string, cap = SIG_CAP): Promise<SigInfo[]> {
   const out: SigInfo[] = [];
   let before: string | undefined;
   while (out.length < cap) {
@@ -144,7 +148,7 @@ async function allSigsAt(url: string, addr: string, cap = 5000): Promise<SigInfo
   }
   return out;
 }
-async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = 5000): Promise<SigInfo[]> {
+async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = SIG_CAP): Promise<{ sigs: SigInfo[]; truncated: boolean }> {
   const eps = [...new Set([GOOD_RPC, ...rpcUrls()].filter(Boolean))] as string[];
   const lists: (SigInfo[] | null)[] = [];
   for (const u of eps) {
@@ -159,7 +163,7 @@ async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = 5000): Pr
   if (lists.every((l) => l === null)) throw new Error("sig fetch failed for " + addr.slice(0, 6));
   const seen = new Map<string, SigInfo>();
   for (const l of lists) for (const s of l || []) if (!seen.has(s.signature)) seen.set(s.signature, s);
-  return [...seen.values()];
+  return { sigs: [...seen.values()], truncated: lists.some((l) => l !== null && l.length >= cap) };
 }
 
 /* ---------- transfer extraction ---------- */
@@ -224,7 +228,7 @@ function walkTransfers(tx: any, mine: Set<string>) {
 }
 
 /* ---------- wallet scan ---------- */
-export type ScanStats = { atas: number; sigs: number; ok: number; fail: number };
+export type ScanStats = { atas: number; sigs: number; ok: number; fail: number; trunc: number };
 async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: string[]) {
   let tokenAccts: string[] = [];
   try {
@@ -237,11 +241,15 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
   const mine = new Set([...tokenAccts, ...derived, ...(extraAccts || [])]);
   const targets = [...new Set([owner, ...mine])];
   const sigMap = new Map<string, SigInfo>();
-  for (const t of targets)
-    for (const s of await allSigsMulti(t, nodeStats))
+  let trunc = 0;
+  for (const t of targets) {
+    const got = await allSigsMulti(t, nodeStats);
+    if (got.truncated) trunc++;
+    for (const s of got.sigs)
       if (!s.err && !sigMap.has(s.signature)) sigMap.set(s.signature, s);
+  }
   const sigs = [...sigMap.values()];
-  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0 };
+  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, trunc };
   const ins: Flow[] = [], outs: OutFlow[] = [];
   const useTx = (tx: any, sig: SigInfo) => {
     let t = deltaTransfers(tx, mine, owner);
@@ -384,9 +392,19 @@ export async function runFullScan(): Promise<RevshareData> {
   const discoveredOwners = new Set<string>();
   const unknown = [...candAccts.entries()].filter(([, c]) => c.srcOwner !== TREASURY && c.srcOwner !== REVSHARE_WALLET);
   const closedMap: Record<string, boolean> = {};
-  if (unknown.length) {
-    const r = await rpcCall("getMultipleAccounts", [unknown.map(([a]) => a).slice(0, 100), { encoding: "base64" }]).catch(() => null);
-    ((r && r.value) || []).forEach((acc: any, j: number) => { closedMap[unknown[j][0]] = acc === null; });
+  // getMultipleAccounts caps at 100 per call — chunk, dont truncate. a dropped
+  // chunk = old treasury accts never discovered = contributors silently missing,
+  // so count failures n surface dem in da diag.
+  let closedFail = 0;
+  for (let i = 0; i < unknown.length; i += 100) {
+    const batch = unknown.slice(i, i + 100);
+    let r: any = null;
+    for (let attempt = 0; attempt < 2 && r === null; attempt++) {
+      r = await rpcCall("getMultipleAccounts", [batch.map(([a]) => a), { encoding: "base64" }]).catch(() => null);
+      if (r === null && attempt === 0) await sleep(600);
+    }
+    if (!r || !r.value) { closedFail += batch.length; continue; }
+    r.value.forEach((acc: any, j: number) => { closedMap[batch[j][0]] = acc === null; });
   }
   for (const [addr, c] of candAccts) {
     if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
@@ -472,12 +490,15 @@ export async function runFullScan(): Promise<RevshareData> {
     else { nodeAgg[s.node].ok++; nodeAgg[s.node].n += s.n; }
   }
   const nodeDiag = Object.entries(nodeAgg).map(([k, v]) => k + ":" + (v.err ? `${v.ok}ok/${v.err}err` : `${v.n} sigs`)).join(" ");
+  const truncTotal = dev.stats.trunc + tre.stats.trunc + rev.stats.trunc;
   const diagContrib =
     `server \u00b7 treasury: ${tre.stats.atas} acct \u00b7 ${tre.stats.ok}/${tre.stats.sigs} txs` +
     (tre.stats.fail ? ` (${tre.stats.fail} dropped)` : "") +
     ` \u00b7\u00b7 revshare: ${rev.stats.atas} acct \u00b7 ${rev.stats.ok}/${rev.stats.sigs} txs` +
     (rev.stats.fail ? ` (${rev.stats.fail} dropped)` : "") +
     (discoveredAccts.length ? ` \u00b7\u00b7 found ${discoveredAccts.length} old acct` : "") +
+    (closedFail ? ` \u00b7\u00b7 WARN ${closedFail} acct unchecked (discovery incomplete)` : "") +
+    (truncTotal ? ` \u00b7\u00b7 WARN sig cap hit on ${truncTotal} addr (old history cut)` : "") +
     ` \u00b7\u00b7 ${nodeDiag}`;
 
   return {
