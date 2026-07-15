@@ -503,7 +503,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v6';
+  const CACHE_KEY = 'spurdo_revshare_v7';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1085,7 +1085,7 @@
       for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
 
       CONTRIB_ROWS = [...agg.entries()]
-        .filter(([w, a]) => a.locked > 0n || a.pending > 0n)   // fully refunded/returned wallets dont count
+        .filter(([w, a]) => a.deposited > 0n)   // evry contributor gets a row — refunded ones show returned
         .map(([w, a]) => ({
           wallet: w, locked: a.locked, pending: a.pending,
           deposited: a.deposited, returned: a.returned,

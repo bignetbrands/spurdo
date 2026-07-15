@@ -467,7 +467,10 @@ export async function runFullScan(): Promise<RevshareData> {
   let pool = 0n, pendingTotal = 0n;
   for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
   const contribRows: ContribRow[] = [...agg.entries()]
-    .filter(([, a]) => a.locked > 0n || a.pending > 0n)
+    // evry wallet dat ever sent 2 da treasury gets a row — incl fully-refunded ones
+    // (locked 0 · pending 0 · returned = all of it). da returned column iz da proof
+    // dey got it back. share% iz locked-only so a refunded wallet reads 0% = no payout.
+    .filter(([, a]) => a.deposited > 0n)
     .map(([w, a]) => ({
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
