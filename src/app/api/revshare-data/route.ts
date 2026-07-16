@@ -11,7 +11,7 @@ import { runFullScan, jstr, jparse } from "@/lib/revshare-scan";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const CACHE_KEY = "revshare:data:v4";
+const CACHE_KEY = "revshare:data:v5";
 const LOCK_KEY = "revshare:scan-lock";
 const MAX_AGE_MS = 5 * 24 * 3600 * 1000;
 

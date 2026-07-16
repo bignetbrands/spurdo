@@ -409,6 +409,7 @@ export type RevshareData = {
   rpcConfigured: boolean;
   decimals: number;
   supplyUi: number | null;
+  revSolLamports: bigint; // current sol in da revshare wallet — da next-payout pot
   locks: Lock[];
   contribRows: ContribRow[];
   pool: bigint; pendingTotal: bigint; sent2dev: bigint;
@@ -481,6 +482,8 @@ export async function runFullScan(): Promise<RevshareData> {
   // missing ~100m of locked attribution.
   const tre = await scanWallet(TREASURY, nodeStats, discoveredAccts);
   const rev = await scanWallet(REVSHARE_WALLET, nodeStats);
+  const revSolLamports = await rpcCall("getBalance", [REVSHARE_WALLET])
+    .then((r: any) => BigInt(r?.value ?? 0)).catch(() => 0n);
 
   // walkTransfers (parsed-instruction fallback) only knows da destination token
   // ACCT, not its owner — n sweep/return/payout detection all key off destOwner.
@@ -589,7 +592,7 @@ export async function runFullScan(): Promise<RevshareData> {
     ` \u00b7\u00b7 ${nodeDiag} \u00b7\u00b7 ${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   return {
-    savedAt: Date.now(), rpcConfigured: FAST(), decimals, supplyUi, locks,
+    savedAt: Date.now(), rpcConfigured: FAST(), decimals, supplyUi, revSolLamports, locks,
     contribRows, pool, pendingTotal, sent2dev,
     diagLocks: "server \u00b7 sources: " + ldiag.join(" \u00b7 "),
     diagContrib,
