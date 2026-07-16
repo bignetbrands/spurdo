@@ -419,10 +419,11 @@
     <div class="state-box hidden" id="contribEmpty">nobody gave benis yet :D</div>
 
     <div class="hidden" id="contribBody">
+      <div class="as-of" id="cPotLine" style="margin-bottom:8px;"></div>
       <div class="ctable-wrap">
         <table class="ctable">
           <thead>
-            <tr><th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>revshare paid</th></tr>
+            <tr><th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>revshare paid</th><th>next payout est</th></tr>
           </thead>
           <tbody id="cRows"></tbody>
         </table>
@@ -501,7 +502,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v8';
+  const CACHE_KEY = 'spurdo_revshare_v9';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -989,6 +990,8 @@
   }
 
   let CONTRIB_ROWS = [];
+  let REV_SOL = 0n; // current sol in da revshare wallet — da next-payout pot
+  let CONTRIB_POOL = 0n;
   let CONTRIB_BUSY = false;
 
   async function loadContribs(force = false) {
@@ -997,6 +1000,7 @@
       const c = readCache();
       if (c && c.contribRows && c.savedAt && (Date.now() - c.savedAt) < CACHE_MAX_AGE) {
         CONTRIB_ROWS = c.contribRows;
+        REV_SOL = c.revSol ?? 0n;
         renderContribs(CONTRIB_ROWS, c.pool ?? 0n, c.pendingTotal ?? 0n, c.sent2dev ?? 0n);
         $('cSrcLine').textContent = c.diagContrib || '';
         $('contribLoading').classList.add('hidden');
@@ -1154,10 +1158,11 @@
         }))
         .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1)));
 
+      REV_SOL = await rpcCall('getBalance', [REVSHARE_WALLET]).then(r => BigInt((r && r.value) || 0)).catch(() => 0n);
       renderContribs(CONTRIB_ROWS, pool, pendingTotal, sent2dev);
       $('contribLoading').classList.add('hidden');
       $('contribBody').classList.remove('hidden');
-      writeCache({ contribRows: CONTRIB_ROWS, pool, pendingTotal, sent2dev, diagContrib: diag });
+      writeCache({ contribRows: CONTRIB_ROWS, pool, pendingTotal, sent2dev, revSol: REV_SOL, diagContrib: diag });
     } catch (e) {
       console.warn('contrib scan failed:', e);
       $('cErrDetail').textContent = String(e && e.message || e);
@@ -1171,10 +1176,16 @@
   function shortW(w) { return w.slice(0, 4) + '\u2026' + w.slice(-4); }
 
   function renderContribs(rows, pool, pendingTotal, sent2dev) {
+    CONTRIB_POOL = pool;
     $('cPending').textContent = fmtAmt(toUi(pendingTotal));
+    $('cPotLine').textContent = REV_SOL > 0n
+      ? 'next payout pot: ' + fmtSol(REV_SOL) + ' sitting in da revshare wallet rite now'
+      : '';
     const tb = $('cRows');
     tb.innerHTML = '';
     rows.forEach((r, i) => {
+      // projected next payout = pot split by locked share (same rule as round 1)
+      const proj = (pool > 0n && r.locked > 0n && REV_SOL > 0n) ? (REV_SOL * r.locked) / pool : 0n;
       const tr = document.createElement('tr');
       tr.innerHTML =
         '<td>' + (i + 1) + '</td>' +
@@ -1184,19 +1195,21 @@
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
-        '<td>' + (r.paid > 0n ? fmtSol(r.paid) : '\u2013') + '</td>';
+        '<td>' + (r.paid > 0n ? fmtSol(r.paid) : '\u2013') + '</td>' +
+        '<td>' + (proj > 0n ? '~' + fmtSol(proj) : '\u2013') + '</td>';
       tb.appendChild(tr);
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
   }
 
   function downloadCsv() {
-    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,revshare_paid_sol\n';
+    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,revshare_paid_sol,next_payout_est_sol\n';
     const lines = CONTRIB_ROWS.map(r => [
       r.wallet, toUi(r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
       r.last ? new Date(r.last * 1000).toISOString() : '',
       Number(r.paid) / 1e9, // sol
+      (CONTRIB_POOL > 0n && r.locked > 0n && REV_SOL > 0n) ? Number((REV_SOL * r.locked) / CONTRIB_POOL) / 1e9 : 0, // projected sol
     ].join(','));
     const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -1318,6 +1331,7 @@
       $('totalsBody').classList.remove('hidden');
       if (c.contribRows) {
         CONTRIB_ROWS = c.contribRows;
+        REV_SOL = c.revSol ?? 0n;
         renderContribs(CONTRIB_ROWS, c.pool ?? 0n, c.pendingTotal ?? 0n, c.sent2dev ?? 0n);
         $('cSrcLine').textContent = c.diagContrib || '';
         $('contribLoading').classList.add('hidden');
@@ -1348,6 +1362,7 @@
       $('totalsError').classList.add('hidden');
       $('totalsBody').classList.remove('hidden');
       CONTRIB_ROWS = d.contribRows || [];
+      REV_SOL = d.revSolLamports ?? 0n;
       renderContribs(CONTRIB_ROWS, d.pool ?? 0n, d.pendingTotal ?? 0n, d.sent2dev ?? 0n);
       $('cSrcLine').textContent = (d.diagContrib || '') +
         (d.rpcConfigured === false ? ' \u00b7\u00b7 \u26a0 no dedicated rpc (set SOLANA_RPC in vercel) \u2014 history may be short' : '');
@@ -1358,7 +1373,7 @@
         scanAt: d.savedAt || Date.now(),
         locks: d.locks, decimals: DECIMALS, supplyUi: SUPPLY_UI, diagLocks: d.diagLocks,
         contribRows: CONTRIB_ROWS, pool: d.pool, pendingTotal: d.pendingTotal,
-        sent2dev: d.sent2dev, diagContrib: $('cSrcLine').textContent,
+        sent2dev: d.sent2dev, revSol: REV_SOL, diagContrib: $('cSrcLine').textContent,
       });
     };
     try {
