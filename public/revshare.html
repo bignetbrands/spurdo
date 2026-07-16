@@ -389,23 +389,9 @@
       <div class="as-of" id="srcLine" style="margin-top:4px;font-family:var(--font-mono);font-size:0.72rem;"></div>
       <button class="refresh-btn" type="button" onclick="loadAll(true)">refresh :D</button>
     </div>
-  </section>
 
-  <!-- LOCK LIST -->
-  <section class="card tilt-r" id="locksCard">
-    <h2>da locks</h2>
-
-    <div class="state-box hidden" id="locksEmpty">
-      no benis in da vault yet :D<br>
-      da first lock iz coming — see da timer on da <a href="/">front page</a>
-    </div>
-
-    <div id="lockList"></div>
-  </section>
-
-  <!-- CONTRIBUTORS -->
-  <section class="card tilt-l" id="contribCard">
-    <h2>who gave benis :DDD</h2>
+    <!-- CONTRIBUTORS — same card, so da totals n da locker list read as one ding -->
+    <h2 style="margin-top:26px;">who gave benis :DDD</h2>
     <p style="margin-bottom: 6px; font-size: 0.9rem;">evry wallet whose $spurdo went treasury → dev → streamflow lock — refunds dont count, read strait from da chain</p>
 
     <div class="state-box" id="contribLoading">
@@ -436,7 +422,6 @@
         <div class="stat"><span class="num" id="cPool">–</span><span class="lbl">locked by holders</span></div>
         <div class="stat"><span class="num" id="cCount">–</span><span class="lbl">wallets locked</span></div>
         <div class="stat"><span class="num" id="cPending">–</span><span class="lbl">pending next lock</span></div>
-        <div class="stat"><span class="num" id="cSent">–</span><span class="lbl">swept 2 dev</span></div>
       </div>
 
       <div class="ctable-wrap">
@@ -452,6 +437,20 @@
       <div class="as-of" id="cSrcLine" style="margin-top:10px;font-family:var(--font-mono);font-size:0.72rem;"></div>
     </div>
   </section>
+
+  <!-- LOCK LIST -->
+  <section class="card tilt-r" id="locksCard">
+    <h2>da locks</h2>
+
+    <div class="state-box hidden" id="locksEmpty">
+      no benis in da vault yet :D<br>
+      da first lock iz coming — see da timer on da <a href="/">front page</a>
+    </div>
+
+    <div id="lockList"></div>
+  </section>
+
+
 
   <footer>
     <div class="grin">:DDD</div>
@@ -1165,7 +1164,6 @@
     $('cPool').textContent    = fmtAmt(toUi(pool));
     $('cCount').textContent   = rows.filter(r => r.locked > 0n).length;
     $('cPending').textContent = fmtAmt(toUi(pendingTotal));
-    $('cSent').textContent    = fmtAmt(toUi(sent2dev));
     const tb = $('cRows');
     tb.innerHTML = '';
     rows.forEach((r, i) => {
