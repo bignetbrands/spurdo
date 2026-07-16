@@ -1278,8 +1278,12 @@
       const u = unlockedAt(lock, now);
       unlocked  += u;
       stillLocked += lock.deposited > u ? lock.deposited - u : 0n;
-      // a lock named *dev* iz da dev's own benis — evryding else iz da revshare pool
-      if (/dev/i.test(lock.name || '')) devLocked += lock.deposited;
+      // dev lock = time-based: da whole deposit unlocks at once on a date
+      // (cliff or single period covers evryding). vesting locks r da revshare pool.
+      const allAtOnce = lock.cliffAmount >= lock.deposited
+        || lock.perPeriod >= lock.deposited
+        || (lock.end - lock.start) <= lock.period;
+      if (allAtOnce) devLocked += lock.deposited;
       else revLocked += lock.deposited;
     }
     $('totalLocked').textContent   = fmtAmt(toUi(stillLocked));
