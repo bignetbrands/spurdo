@@ -51,6 +51,20 @@ async function rpcCallAt(url: string, method: string, params: unknown[], timeout
     clearTimeout(t);
   }
 }
+// getTransaction returning null iz a VALID response meaning "dis node dont have it"
+// (pruned) — rpcCall only falls back on errors, so a null from da primary node
+// silently ate old deposits while da diag said all ok. walk da nodes til one
+// actually has da tx; null from evryone = genuinely gone (caller counts it).
+async function getTxMulti(sig: string): Promise<any> {
+  let sawError = false;
+  for (const url of rpcUrls()) {
+    try {
+      const tx = await rpcCallAt(url, "getTransaction", [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]);
+      if (tx !== null) return tx;
+    } catch { sawError = true; }
+  }
+  return sawError ? undefined : null; // undefined → retry pass; null → all nodes agree itz gone
+}
 async function rpcCall(method: string, params: unknown[]): Promise<any> {
   let lastErr: unknown = new Error("no rpc");
   const urls = rpcUrls();
@@ -236,7 +250,7 @@ function walkTransfers(tx: any, mine: Set<string>) {
 }
 
 /* ---------- wallet scan ---------- */
-export type ScanStats = { atas: number; sigs: number; ok: number; fail: number; trunc: number };
+export type ScanStats = { atas: number; sigs: number; ok: number; fail: number; trunc: number; gone: number };
 async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: string[]) {
   let tokenAccts: string[] = [];
   try {
@@ -257,7 +271,7 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
       if (!s.err && !sigMap.has(s.signature)) sigMap.set(s.signature, s);
   }
   const sigs = [...sigMap.values()];
-  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, trunc };
+  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, trunc, gone: 0 };
   const ins: Flow[] = [], outs: OutFlow[] = [];
   const useTx = (tx: any, sig: SigInfo) => {
     let t = deltaTransfers(tx, mine, owner);
@@ -273,12 +287,12 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
     const failed: SigInfo[] = [];
     for (let i = 0; i < queue.length; i += CONC) {
       const chunk = queue.slice(i, i + CONC);
-      const txs = await Promise.all(chunk.map((s) =>
-        rpcCall("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+      const txs = await Promise.all(chunk.map((s) => getTxMulti(s.signature)));
       txs.forEach((tx, j) => {
         if (tx === undefined) { failed.push(chunk[j]); return; }
+        if (tx === null) { stats.gone++; return; } // evry node says pruned — count it, dont fake ok
         stats.ok++;
-        if (tx) useTx(tx, chunk[j]);
+        useTx(tx, chunk[j]);
       });
       await sleep(WAIT);
     }
@@ -424,15 +438,40 @@ export async function runFullScan(): Promise<RevshareData> {
     }
   }
 
+  // discovered accts ride along in da treasury scan (extraAccts → mine → their full
+  // sig history walked, deposits attributed 2 da payer, sweeps 2 dev detected). we
+  // deliberately do NOT scan da discovered OWNER wallets: da closed+sweep-sized
+  // heuristic can catch a real holder who sent 2 dev (7yDMgrdZ haz 6.4m of dev
+  // inflows on-chain today) — scanning their wallet as if it were a treasury
+  // scrambles accounting (their trades become deposits/returns), n marking dem
+  // internal vaporizes evry deposit dey ever made. burned us: da live table wuz
+  // missing ~100m of locked attribution.
   const tre = await scanWallet(TREASURY, nodeStats, discoveredAccts);
-  for (const vo of discoveredOwners) {
-    if (vo === TREASURY || vo === DEV_WALLET) continue;
-    const extra = await scanWallet(vo, nodeStats);
-    tre.ins.push(...extra.ins); tre.outs.push(...extra.outs);
-    tre.stats.atas += extra.stats.atas; tre.stats.sigs += extra.stats.sigs;
-    tre.stats.ok += extra.stats.ok; tre.stats.fail += extra.stats.fail;
-  }
   const rev = await scanWallet(REVSHARE_WALLET, nodeStats);
+
+  // walkTransfers (parsed-instruction fallback) only knows da destination token
+  // ACCT, not its owner — n sweep/return/payout detection all key off destOwner.
+  // batch-resolve missing owners; closed accts stay unknown n get counted.
+  let unresolvedOuts = 0;
+  {
+    const need = [...new Set([...tre.outs, ...rev.outs]
+      .filter((o) => !o.destOwner && o.dest && o.dest !== "balance-delta")
+      .map((o) => o.dest))];
+    const ownerOf = new Map<string, string>();
+    for (let i = 0; i < need.length; i += 100) {
+      const batch = need.slice(i, i + 100);
+      const r = await rpcCall("getMultipleAccounts", [batch, { encoding: "jsonParsed" }]).catch(() => null);
+      if (!r || !r.value) continue;
+      r.value.forEach((acc: any, j: number) => {
+        const ow = acc?.data?.parsed?.info?.owner;
+        if (ow) ownerOf.set(batch[j], ow);
+      });
+    }
+    for (const o of [...tre.outs, ...rev.outs]) {
+      if (!o.destOwner && ownerOf.has(o.dest)) o.destOwner = ownerOf.get(o.dest);
+      if (!o.destOwner) unresolvedOuts++;
+    }
+  }
   if (tre.stats.fail > 0 && tre.ins.length === 0) throw new Error(`rpc dropped ${tre.stats.fail} of ${tre.stats.sigs} treasury txs`);
 
   // payouts per wallet
@@ -444,7 +483,7 @@ export async function runFullScan(): Promise<RevshareData> {
   }
 
   // event timeline: deposit→pending, sweep→locked, returns drain pending den locked
-  const internal = new Set([...INTERNAL_WALLETS, ...discoveredOwners]);
+  const internal = new Set(INTERNAL_WALLETS);
   type Ev = { t: number; ord: number; type: "dep" | "sweep" | "ret"; w?: string; amt?: bigint };
   const events: Ev[] = [];
   for (const d of tre.ins) {
@@ -512,6 +551,8 @@ export async function runFullScan(): Promise<RevshareData> {
     (discoveredAccts.length ? ` \u00b7\u00b7 found ${discoveredAccts.length} old acct` : "") +
     (closedFail ? ` \u00b7\u00b7 WARN ${closedFail} acct unchecked (discovery incomplete)` : "") +
     (truncTotal ? ` \u00b7\u00b7 WARN sig cap hit on ${truncTotal} addr (old history cut)` : "") +
+    (tre.stats.gone + rev.stats.gone + dev.stats.gone ? ` \u00b7\u00b7 WARN ${tre.stats.gone + rev.stats.gone + dev.stats.gone} tx pruned on all nodes` : "") +
+    (unresolvedOuts ? ` \u00b7\u00b7 WARN ${unresolvedOuts} outs w/ unknown dest owner` : "") +
     ` \u00b7\u00b7 ${nodeDiag} \u00b7\u00b7 ${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   return {

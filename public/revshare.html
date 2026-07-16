@@ -794,6 +794,18 @@
   // paging runs newest→oldest, so hitting da cap silently eats da OLDEST history —
   // exactly da early contributors. keep headroom n count truncation (SIG_TRUNC).
   const SIG_CAP = 20000;
+  // getTransaction null = "dis node dont have it" (pruned) — not success. walk
+  // da nodes; null from all = genuinely gone, caller counts it in stats.gone.
+  async function getTxMulti(sig) {
+    let sawError = false;
+    for (const u of [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))]) {
+      try {
+        const tx = await rpcCallAt(u, 'getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]);
+        if (tx !== null) { GOOD_RPC = u; return tx; }
+      } catch (e) { sawError = true; }
+    }
+    return sawError ? undefined : null;
+  }
   async function allSigsAt(url, addr, cap = SIG_CAP) {
     const out = [];
     let before;
@@ -908,7 +920,7 @@
       }
     }
     const sigs = [...sigMap.values()];
-    const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0 };
+    const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, gone: 0 };
     const ins = [], outs = [];
     const useTx = (tx, sig) => {
       let t = deltaTransfers(tx, mine, owner);
@@ -924,12 +936,12 @@
       const failed = [];
       for (let i = 0; i < queue.length; i += CONC) {
         const chunk = queue.slice(i, i + CONC);
-        const txs = await Promise.all(chunk.map(s =>
-          rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+        const txs = await Promise.all(chunk.map(s => getTxMulti(s.signature)));
         txs.forEach((tx, j) => {
           if (tx === undefined) { failed.push(chunk[j]); return; }
+          if (tx === null) { stats.gone++; return; } // pruned on evry reachable node
           stats.ok++;
-          if (tx) useTx(tx, chunk[j]);
+          useTx(tx, chunk[j]);
         });
         if (onProgress) onProgress(label, Math.min(stats.ok + failed.length, stats.sigs), stats.sigs, pass);
         await new Promise(r => setTimeout(r, WAIT));
@@ -1022,16 +1034,26 @@
 
       // 2) treasury scan across configured identity + evryding discovered
       const tre = await scanWallet(TREASURY, 'treasury', onP, discoveredAccts);
-      for (const vo of discoveredOwners) {
-        if (vo === TREASURY || vo === DEV_WALLET) continue;
-        const extra = await scanWallet(vo, 'treasury (vault)', onP);
-        tre.ins.push(...extra.ins); tre.outs.push(...extra.outs);
-        tre.stats.atas += extra.stats.atas; tre.stats.sigs += extra.stats.sigs;
-        tre.stats.ok += extra.stats.ok; tre.stats.fail += extra.stats.fail;
-      }
+      // discovered accts ride along in da treasury scan (extraAccts). we do NOT
+      // scan discovered OWNER wallets — da closed+sweep-sized heuristic can catch
+      // a real holder who sent 2 dev, n treating dem as treasury scrambles da
+      // accounting n vaporizes their deposits.
       const rev = await scanWallet(REVSHARE_WALLET, 'revshare', onP);
 
-      const internal = new Set([...INTERNAL_WALLETS, ...discoveredOwners]);
+      // walkTransfers fallback only knows da destination token ACCT — resolve owners
+      // so sweep/return/payout detection works on dat path too
+      let unresolvedOuts = 0;
+      {
+        const need = new Set([...tre.outs, ...rev.outs]
+          .filter(o => !o.destOwner && o.dest && o.dest !== 'balance-delta').map(o => o.dest));
+        const om = need.size ? await ownersOf(need) : {};
+        for (const o of [...tre.outs, ...rev.outs]) {
+          if (!o.destOwner && om[o.dest]) o.destOwner = om[o.dest];
+          if (!o.destOwner) unresolvedOuts++;
+        }
+      }
+
+      const internal = new Set(INTERNAL_WALLETS);
       const nodeDiag = (() => {
         const agg = {};
         for (const s of SIG_NODE_STATS) { agg[s.node] = agg[s.node] || { ok: 0, err: 0, n: 0 }; if (s.n < 0) agg[s.node].err++; else { agg[s.node].ok++; agg[s.node].n += s.n; } }
@@ -1046,6 +1068,8 @@
         (discoveredAccts.length ? '  \u00b7\u00b7  found ' + discoveredAccts.length + ' old acct' : '') +
         (closedFail ? '  \u00b7\u00b7  WARN ' + closedFail + ' acct unchecked (discovery incomplete)' : '') +
         (SIG_TRUNC ? '  \u00b7\u00b7  WARN sig cap hit on ' + SIG_TRUNC + ' addr (old history cut)' : '') +
+        ((tre.stats.gone + rev.stats.gone) ? '  \u00b7\u00b7  WARN ' + (tre.stats.gone + rev.stats.gone) + ' tx pruned on all nodes' : '') +
+        (unresolvedOuts ? '  \u00b7\u00b7  WARN ' + unresolvedOuts + ' outs w/ unknown dest owner' : '') +
         '  \u00b7\u00b7  ' + nodeDiag;
       $('cSrcLine').textContent = diag;
       console.log('contrib scan:', diag);
