@@ -379,10 +379,11 @@
       <div class="big-lbl">$spurdo locked rite now</div>
 
       <div class="stat-row">
-        <div class="stat"><span class="num" id="statDeposited">–</span><span class="lbl">total deposited</span></div>
-        <div class="stat"><span class="num" id="statUnlocked">–</span><span class="lbl">unlocked so far</span></div>
-        <div class="stat"><span class="num" id="statClaimed">–</span><span class="lbl">claimed</span></div>
+        <div class="stat"><span class="num" id="statRevLocked">–</span><span class="lbl">revshare locked</span></div>
+        <div class="stat"><span class="num" id="statDevLock">–</span><span class="lbl">dev lock</span></div>
+        <div class="stat"><span class="num" id="statUnlocked">–</span><span class="lbl">unlocked</span></div>
         <div class="stat"><span class="num" id="statPct">–</span><span class="lbl">of total suply locked</span></div>
+        <div class="stat"><span class="num" id="cPending">–</span><span class="lbl">pending next lock</span></div>
       </div>
 
       <div class="as-of" id="asOf"></div>
@@ -418,12 +419,6 @@
     <div class="state-box hidden" id="contribEmpty">nobody gave benis yet :D</div>
 
     <div class="hidden" id="contribBody">
-      <div class="stat-row" style="margin-bottom: 18px;">
-        <div class="stat"><span class="num" id="cPool">–</span><span class="lbl">locked by holders</span></div>
-        <div class="stat"><span class="num" id="cCount">–</span><span class="lbl">wallets locked</span></div>
-        <div class="stat"><span class="num" id="cPending">–</span><span class="lbl">pending next lock</span></div>
-      </div>
-
       <div class="ctable-wrap">
         <table class="ctable">
           <thead>
@@ -1161,8 +1156,6 @@
   function shortW(w) { return w.slice(0, 4) + '\u2026' + w.slice(-4); }
 
   function renderContribs(rows, pool, pendingTotal, sent2dev) {
-    $('cPool').textContent    = fmtAmt(toUi(pool));
-    $('cCount').textContent   = rows.filter(r => r.locked > 0n).length;
     $('cPending').textContent = fmtAmt(toUi(pendingTotal));
     const tb = $('cRows');
     tb.innerHTML = '';
@@ -1264,19 +1257,20 @@
 
   function renderTotals(locks) {
     const now = Math.floor(Date.now() / 1000);
-    let deposited = 0n, unlocked = 0n, claimed = 0n, stillLocked = 0n;
+    let unlocked = 0n, stillLocked = 0n, revLocked = 0n, devLocked = 0n;
     for (const lock of locks) {
       if (lock.canceledAt > 0) continue;   // cancelld locks dont count
       const u = unlockedAt(lock, now);
-      deposited += lock.deposited;
       unlocked  += u;
-      claimed   += lock.withdrawn;
       stillLocked += lock.deposited > u ? lock.deposited - u : 0n;
+      // a lock named *dev* iz da dev's own benis — evryding else iz da revshare pool
+      if (/dev/i.test(lock.name || '')) devLocked += lock.deposited;
+      else revLocked += lock.deposited;
     }
     $('totalLocked').textContent   = fmtAmt(toUi(stillLocked));
-    $('statDeposited').textContent = fmtAmt(toUi(deposited));
+    $('statRevLocked').textContent = fmtAmt(toUi(revLocked));
+    $('statDevLock').textContent   = fmtAmt(toUi(devLocked));
     $('statUnlocked').textContent  = fmtAmt(toUi(unlocked));
-    $('statClaimed').textContent   = fmtAmt(toUi(claimed));
     $('statPct').textContent = (SUPPLY_UI && SUPPLY_UI > 0)
       ? ((toUi(stillLocked) / SUPPLY_UI) * 100).toFixed(2) + '%'
       : '–';
