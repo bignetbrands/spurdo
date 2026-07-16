@@ -673,20 +673,28 @@
   /* ---------- rpc plumbing ---------- */
   let GOOD_RPC = null; // sticky: first endpoint dat answers keeps da job
   async function rpcCallAt(url, method, params) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 12000);
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error('rpc ' + res.status);
-      const json = await res.json();
-      if (json.error) throw new Error(json.error.message || 'rpc error');
-      return json.result;
-    } finally { clearTimeout(t); }
+    // 429/5xx = "slow down", not "give up" — back off n retry b4 failing da node
+    for (let attempt = 0; ; attempt++) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+          signal: ctrl.signal,
+        });
+        if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+          clearTimeout(t);
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        if (!res.ok) throw new Error('rpc ' + res.status);
+        const json = await res.json();
+        if (json.error) throw new Error(json.error.message || 'rpc error');
+        return json.result;
+      } finally { clearTimeout(t); }
+    }
   }
   async function rpcCall(method, params) {
     let lastErr = new Error('no rpc');

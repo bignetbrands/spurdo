@@ -34,21 +34,31 @@ const FAST = () => !!process.env.SOLANA_RPC;
 /* ---------- rpc ---------- */
 let GOOD_RPC: string | null = null;
 async function rpcCallAt(url: string, method: string, params: unknown[], timeoutMs = 12000): Promise<any> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) throw new Error(`rpc ${res.status}`);
-    const json = await res.json();
-    if (json.error) throw new Error(json.error.message || "rpc error");
-    return json.result;
-  } finally {
-    clearTimeout(t);
+  // 429/5xx = "slow down", not "give up" — back off n retry b4 failing da node.
+  // helius free tier rate-limits hard; dropping a tx here means a wallet
+  // silently loses a deposit, so patience > speed.
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: ctrl.signal,
+      });
+      if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+        clearTimeout(t);
+        await sleep(500 * (attempt + 1));
+        continue;
+      }
+      if (!res.ok) throw new Error(`rpc ${res.status}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message || "rpc error");
+      return json.result;
+    } finally {
+      clearTimeout(t);
+    }
   }
 }
 // getTransaction returning null iz a VALID response meaning "dis node dont have it"
@@ -61,7 +71,7 @@ async function getTxMulti(sig: string): Promise<any> {
     try {
       const tx = await rpcCallAt(url, "getTransaction", [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]);
       if (tx !== null) return tx;
-    } catch { sawError = true; }
+    } catch { sawError = true; await sleep(250); }
   }
   return sawError ? undefined : null; // undefined → retry pass; null → all nodes agree itz gone
 }
@@ -281,9 +291,9 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
     for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
   };
   let queue = sigs;
-  for (let pass = 0; pass < 2 && queue.length; pass++) {
-    const CONC = FAST() ? 10 : pass === 0 ? 4 : 2;
-    const WAIT = FAST() ? 30 : pass === 0 ? 180 : 500;
+  for (let pass = 0; pass < 3 && queue.length; pass++) {
+    const CONC = pass > 0 ? 2 : FAST() ? 8 : 4;
+    const WAIT = pass > 0 ? 600 : FAST() ? 60 : 180;
     const failed: SigInfo[] = [];
     for (let i = 0; i < queue.length; i += CONC) {
       const chunk = queue.slice(i, i + CONC);
@@ -297,7 +307,7 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
       await sleep(WAIT);
     }
     queue = failed;
-    if (queue.length && pass === 0) await sleep(1200);
+    if (queue.length) await sleep(1500); // let da rate limiter forgive us b4 da next pass
   }
   stats.fail += queue.length;
   return { ins, outs, stats };
