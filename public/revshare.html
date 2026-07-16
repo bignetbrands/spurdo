@@ -912,7 +912,7 @@
     return res;
   }
 
-  async function scanWallet(owner, label, onProgress, extraAccts) {
+  async function scanWallet(owner, label, onProgress, extraAccts, skipOwnerSigs) {
     const tokenAccts = new Set(await findAtas(owner).catch(() => []));
     // derive canonical token acct addresses — closed accts keep dere sig history at da same address
     const derived = [];
@@ -920,7 +920,9 @@
     try { derived.push(await deriveAta(owner, MINT, TOKEN22_PROG)); } catch (e) {}
     const mine = new Set([...tokenAccts, ...derived, ...(extraAccts || [])]);
     // scan owner address too (catches create+deposit combos n squads ops)
-    const targets = [...new Set([owner, ...mine])];
+    // spl transfers never reference da owner in accountKeys — mint flows all touch
+    // da token accts, so da dev scan can skip ~5.7k owner-sig noise txs
+    const targets = [...new Set(skipOwnerSigs ? [...mine] : [owner, ...mine])];
     const sigMap = new Map();
     for (const t of targets) {
       for (const s of await allSigsMulti(t)) {
@@ -1006,7 +1008,7 @@
       SIG_NODE_STATS.length = 0;
 
       // 1) da dev wallet received da sweeps — its inflow sources ARE da historical treasury accounts
-      const dev = await scanWallet(DEV_WALLET, 'dev wallet', onP);
+      const dev = await scanWallet(DEV_WALLET, 'dev wallet', onP, undefined, true);
       const candAccts = new Map(); // srcAddr -> {srcOwner, amount}
       for (const i of dev.ins) {
         if (!i.srcAddr) continue;
