@@ -261,7 +261,7 @@ function walkTransfers(tx: any, mine: Set<string>) {
 
 /* ---------- wallet scan ---------- */
 export type ScanStats = { atas: number; sigs: number; ok: number; fail: number; trunc: number; gone: number };
-async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: string[]) {
+async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: string[], skipOwnerSigs = false) {
   let tokenAccts: string[] = [];
   try {
     const r = await rpcCall("getTokenAccountsByOwner", [owner, { mint: MINT }, { encoding: "jsonParsed" }]);
@@ -271,7 +271,10 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
   try { derived.push(await deriveAta(owner, MINT)); } catch { }
   try { derived.push(await deriveAta(owner, MINT, TOKEN22_PROG)); } catch { }
   const mine = new Set([...tokenAccts, ...derived, ...(extraAccts || [])]);
-  const targets = [...new Set([owner, ...mine])];
+  // spl transfers never reference da owner wallet in accountKeys (handoff gotcha),
+  // so mint flows all touch da token accts — for da dev wallet dat cuts ~5.7k
+  // owner-sig txs (sol/streamflow noise) dat blew da 300s budget.
+  const targets = [...new Set(skipOwnerSigs ? [...mine] : [owner, ...mine])];
   const sigMap = new Map<string, SigInfo>();
   let trunc = 0;
   for (const t of targets) {
@@ -414,7 +417,7 @@ export async function runFullScan(): Promise<RevshareData> {
 
   // contributor scan wit dev-side discovery
   const nodeStats: NodeStat[] = [];
-  const dev = await scanWallet(DEV_WALLET, nodeStats);
+  const dev = await scanWallet(DEV_WALLET, nodeStats, undefined, true); // inflow discovery only needs da atas
   const candAccts = new Map<string, { srcOwner?: string; amount: bigint }>();
   for (const i of dev.ins) {
     if (!i.srcAddr) continue;
