@@ -51,6 +51,20 @@ async function rpcCallAt(url: string, method: string, params: unknown[], timeout
     clearTimeout(t);
   }
 }
+// getTransaction returning null iz a VALID response meaning "dis node dont have it"
+// (pruned) — rpcCall only falls back on errors, so a null from da primary node
+// silently ate old deposits while da diag said all ok. walk da nodes til one
+// actually has da tx; null from evryone = genuinely gone (caller counts it).
+async function getTxMulti(sig: string): Promise<any> {
+  let sawError = false;
+  for (const url of rpcUrls()) {
+    try {
+      const tx = await rpcCallAt(url, "getTransaction", [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]);
+      if (tx !== null) return tx;
+    } catch { sawError = true; }
+  }
+  return sawError ? undefined : null; // undefined → retry pass; null → all nodes agree itz gone
+}
 async function rpcCall(method: string, params: unknown[]): Promise<any> {
   let lastErr: unknown = new Error("no rpc");
   const urls = rpcUrls();
@@ -131,7 +145,11 @@ type SigInfo = { signature: string; blockTime?: number; err?: unknown };
 export type NodeStat = { node: string; n: number };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function allSigsAt(url: string, addr: string, cap = 5000): Promise<SigInfo[]> {
+// paging runs newest→oldest, so hitting da cap silently eats da OLDEST history —
+// exactly da early contributors. da dev wallet already sits >5000, so keep headroom
+// n report truncation instead of swallowing it.
+const SIG_CAP = 20000;
+async function allSigsAt(url: string, addr: string, cap = SIG_CAP): Promise<SigInfo[]> {
   const out: SigInfo[] = [];
   let before: string | undefined;
   while (out.length < cap) {
@@ -150,7 +168,7 @@ function sigEndpoints(): string[] {
   return rpcUrls();
 }
 const DEAD_NODES = new Map<string, number>(); // url -> fail count (benched at 2)
-async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = 5000): Promise<SigInfo[]> {
+async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = SIG_CAP): Promise<{ sigs: SigInfo[]; truncated: boolean }> {
   const eps = sigEndpoints().filter((u) => (DEAD_NODES.get(u) || 0) < 2);
   if (!eps.length) throw new Error("all sig nodes benched");
   const lists = await Promise.all(eps.map(async (u) => {
@@ -167,7 +185,7 @@ async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = 5000): Pr
   if (lists.every((l) => l === null)) throw new Error("sig fetch failed for " + addr.slice(0, 6));
   const seen = new Map<string, SigInfo>();
   for (const l of lists) for (const s of l || []) if (!seen.has(s.signature)) seen.set(s.signature, s);
-  return [...seen.values()];
+  return { sigs: [...seen.values()], truncated: lists.some((l) => l !== null && l.length >= cap) };
 }
 
 /* ---------- transfer extraction ---------- */
@@ -232,7 +250,7 @@ function walkTransfers(tx: any, mine: Set<string>) {
 }
 
 /* ---------- wallet scan ---------- */
-export type ScanStats = { atas: number; sigs: number; ok: number; fail: number };
+export type ScanStats = { atas: number; sigs: number; ok: number; fail: number; trunc: number; gone: number };
 async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: string[]) {
   let tokenAccts: string[] = [];
   try {
@@ -245,11 +263,15 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
   const mine = new Set([...tokenAccts, ...derived, ...(extraAccts || [])]);
   const targets = [...new Set([owner, ...mine])];
   const sigMap = new Map<string, SigInfo>();
-  for (const t of targets)
-    for (const s of await allSigsMulti(t, nodeStats))
+  let trunc = 0;
+  for (const t of targets) {
+    const got = await allSigsMulti(t, nodeStats);
+    if (got.truncated) trunc++;
+    for (const s of got.sigs)
       if (!s.err && !sigMap.has(s.signature)) sigMap.set(s.signature, s);
+  }
   const sigs = [...sigMap.values()];
-  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0 };
+  const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, trunc, gone: 0 };
   const ins: Flow[] = [], outs: OutFlow[] = [];
   const useTx = (tx: any, sig: SigInfo) => {
     let t = deltaTransfers(tx, mine, owner);
@@ -265,12 +287,12 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
     const failed: SigInfo[] = [];
     for (let i = 0; i < queue.length; i += CONC) {
       const chunk = queue.slice(i, i + CONC);
-      const txs = await Promise.all(chunk.map((s) =>
-        rpcCall("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+      const txs = await Promise.all(chunk.map((s) => getTxMulti(s.signature)));
       txs.forEach((tx, j) => {
         if (tx === undefined) { failed.push(chunk[j]); return; }
+        if (tx === null) { stats.gone++; return; } // evry node says pruned — count it, dont fake ok
         stats.ok++;
-        if (tx) useTx(tx, chunk[j]);
+        useTx(tx, chunk[j]);
       });
       await sleep(WAIT);
     }
@@ -394,9 +416,19 @@ export async function runFullScan(): Promise<RevshareData> {
   const discoveredOwners = new Set<string>();
   const unknown = [...candAccts.entries()].filter(([, c]) => c.srcOwner !== TREASURY && c.srcOwner !== REVSHARE_WALLET);
   const closedMap: Record<string, boolean> = {};
-  if (unknown.length) {
-    const r = await rpcCall("getMultipleAccounts", [unknown.map(([a]) => a).slice(0, 100), { encoding: "base64" }]).catch(() => null);
-    ((r && r.value) || []).forEach((acc: any, j: number) => { closedMap[unknown[j][0]] = acc === null; });
+  // getMultipleAccounts caps at 100 accts per call — chunk, dont truncate. a dropped
+  // chunk = old treasury accts never discovered = contributors silently missing, so
+  // count wat we couldnt check n surface it in da diag.
+  let closedFail = 0;
+  for (let i = 0; i < unknown.length; i += 100) {
+    const batch = unknown.slice(i, i + 100);
+    let r: any = null;
+    for (let attempt = 0; attempt < 2 && r === null; attempt++) {
+      r = await rpcCall("getMultipleAccounts", [batch.map(([a]) => a), { encoding: "base64" }]).catch(() => null);
+      if (r === null && attempt === 0) await sleep(600);
+    }
+    if (!r || !r.value) { closedFail += batch.length; continue; }
+    r.value.forEach((acc: any, j: number) => { closedMap[batch[j][0]] = acc === null; });
   }
   for (const [addr, c] of candAccts) {
     if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
@@ -406,15 +438,40 @@ export async function runFullScan(): Promise<RevshareData> {
     }
   }
 
+  // discovered accts ride along in da treasury scan (extraAccts → mine → their full
+  // sig history walked, deposits attributed 2 da payer, sweeps 2 dev detected). we
+  // deliberately do NOT scan da discovered OWNER wallets: da closed+sweep-sized
+  // heuristic can catch a real holder who sent 2 dev (7yDMgrdZ haz 6.4m of dev
+  // inflows on-chain today) — scanning their wallet as if it were a treasury
+  // scrambles accounting (their trades become deposits/returns), n marking dem
+  // internal vaporizes evry deposit dey ever made. burned us: da live table wuz
+  // missing ~100m of locked attribution.
   const tre = await scanWallet(TREASURY, nodeStats, discoveredAccts);
-  for (const vo of discoveredOwners) {
-    if (vo === TREASURY || vo === DEV_WALLET) continue;
-    const extra = await scanWallet(vo, nodeStats);
-    tre.ins.push(...extra.ins); tre.outs.push(...extra.outs);
-    tre.stats.atas += extra.stats.atas; tre.stats.sigs += extra.stats.sigs;
-    tre.stats.ok += extra.stats.ok; tre.stats.fail += extra.stats.fail;
-  }
   const rev = await scanWallet(REVSHARE_WALLET, nodeStats);
+
+  // walkTransfers (parsed-instruction fallback) only knows da destination token
+  // ACCT, not its owner — n sweep/return/payout detection all key off destOwner.
+  // batch-resolve missing owners; closed accts stay unknown n get counted.
+  let unresolvedOuts = 0;
+  {
+    const need = [...new Set([...tre.outs, ...rev.outs]
+      .filter((o) => !o.destOwner && o.dest && o.dest !== "balance-delta")
+      .map((o) => o.dest))];
+    const ownerOf = new Map<string, string>();
+    for (let i = 0; i < need.length; i += 100) {
+      const batch = need.slice(i, i + 100);
+      const r = await rpcCall("getMultipleAccounts", [batch, { encoding: "jsonParsed" }]).catch(() => null);
+      if (!r || !r.value) continue;
+      r.value.forEach((acc: any, j: number) => {
+        const ow = acc?.data?.parsed?.info?.owner;
+        if (ow) ownerOf.set(batch[j], ow);
+      });
+    }
+    for (const o of [...tre.outs, ...rev.outs]) {
+      if (!o.destOwner && ownerOf.has(o.dest)) o.destOwner = ownerOf.get(o.dest);
+      if (!o.destOwner) unresolvedOuts++;
+    }
+  }
   if (tre.stats.fail > 0 && tre.ins.length === 0) throw new Error(`rpc dropped ${tre.stats.fail} of ${tre.stats.sigs} treasury txs`);
 
   // payouts per wallet
@@ -426,7 +483,7 @@ export async function runFullScan(): Promise<RevshareData> {
   }
 
   // event timeline: deposit→pending, sweep→locked, returns drain pending den locked
-  const internal = new Set([...INTERNAL_WALLETS, ...discoveredOwners]);
+  const internal = new Set(INTERNAL_WALLETS);
   type Ev = { t: number; ord: number; type: "dep" | "sweep" | "ret"; w?: string; amt?: bigint };
   const events: Ev[] = [];
   for (const d of tre.ins) {
@@ -467,7 +524,10 @@ export async function runFullScan(): Promise<RevshareData> {
   let pool = 0n, pendingTotal = 0n;
   for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
   const contribRows: ContribRow[] = [...agg.entries()]
-    .filter(([, a]) => a.locked > 0n || a.pending > 0n)
+    // evry wallet dat ever sent 2 da treasury gets a row — incl fully-refunded ones
+    // (locked 0 · pending 0 · returned = all of it). da returned column iz da proof
+    // dey got it back. share% iz locked-only so a refunded wallet reads 0% = no payout.
+    .filter(([, a]) => a.deposited > 0n)
     .map(([w, a]) => ({
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
@@ -482,12 +542,17 @@ export async function runFullScan(): Promise<RevshareData> {
     else { nodeAgg[s.node].ok++; nodeAgg[s.node].n += s.n; }
   }
   const nodeDiag = Object.entries(nodeAgg).map(([k, v]) => k + ":" + (v.err ? `${v.ok}ok/${v.err}err` : `${v.n} sigs`)).join(" ");
+  const truncTotal = dev.stats.trunc + tre.stats.trunc + rev.stats.trunc;
   const diagContrib =
     `server \u00b7 treasury: ${tre.stats.atas} acct \u00b7 ${tre.stats.ok}/${tre.stats.sigs} txs` +
     (tre.stats.fail ? ` (${tre.stats.fail} dropped)` : "") +
     ` \u00b7\u00b7 revshare: ${rev.stats.atas} acct \u00b7 ${rev.stats.ok}/${rev.stats.sigs} txs` +
     (rev.stats.fail ? ` (${rev.stats.fail} dropped)` : "") +
     (discoveredAccts.length ? ` \u00b7\u00b7 found ${discoveredAccts.length} old acct` : "") +
+    (closedFail ? ` \u00b7\u00b7 WARN ${closedFail} acct unchecked (discovery incomplete)` : "") +
+    (truncTotal ? ` \u00b7\u00b7 WARN sig cap hit on ${truncTotal} addr (old history cut)` : "") +
+    (tre.stats.gone + rev.stats.gone + dev.stats.gone ? ` \u00b7\u00b7 WARN ${tre.stats.gone + rev.stats.gone + dev.stats.gone} tx pruned on all nodes` : "") +
+    (unresolvedOuts ? ` \u00b7\u00b7 WARN ${unresolvedOuts} outs w/ unknown dest owner` : "") +
     ` \u00b7\u00b7 ${nodeDiag} \u00b7\u00b7 ${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   return {

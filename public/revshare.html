@@ -503,7 +503,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v6';
+  const CACHE_KEY = 'spurdo_revshare_v7';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -791,7 +791,22 @@
     return (r.value || []).map(v => v.pubkey);
   }
 
-  async function allSigsAt(url, addr, cap = 3000) {
+  // paging runs newest→oldest, so hitting da cap silently eats da OLDEST history —
+  // exactly da early contributors. keep headroom n count truncation (SIG_TRUNC).
+  const SIG_CAP = 20000;
+  // getTransaction null = "dis node dont have it" (pruned) — not success. walk
+  // da nodes; null from all = genuinely gone, caller counts it in stats.gone.
+  async function getTxMulti(sig) {
+    let sawError = false;
+    for (const u of [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))]) {
+      try {
+        const tx = await rpcCallAt(u, 'getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]);
+        if (tx !== null) { GOOD_RPC = u; return tx; }
+      } catch (e) { sawError = true; }
+    }
+    return sawError ? undefined : null;
+  }
+  async function allSigsAt(url, addr, cap = SIG_CAP) {
     const out = [];
     let before;
     while (out.length < cap) {
@@ -807,7 +822,8 @@
 
   /* public nodes prune old history n rate-limit — ask evry node, union, count per node */
   const SIG_NODE_STATS = [];
-  async function allSigsMulti(addr, cap = 3000) {
+  let SIG_TRUNC = 0;
+  async function allSigsMulti(addr, cap = SIG_CAP) {
     const eps = [...new Set([GOOD_RPC, ...RPC_URLS].filter(Boolean))];
     const lists = [];
     for (const u of eps) {
@@ -820,6 +836,7 @@
       SIG_NODE_STATS.push({ node: u.replace(/^https?:\/\//, '').split('/')[0].split('.')[0], n: l === null ? -1 : l.length });
     }
     if (lists.every(l => l === null)) throw new Error('sig fetch failed for ' + addr.slice(0, 6));
+    if (lists.some(l => l !== null && l.length >= cap)) SIG_TRUNC++;
     const seen = new Map();
     for (const l of lists) for (const s of (l || [])) if (!seen.has(s.signature)) seen.set(s.signature, s);
     return [...seen.values()];
@@ -903,7 +920,7 @@
       }
     }
     const sigs = [...sigMap.values()];
-    const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0 };
+    const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, gone: 0 };
     const ins = [], outs = [];
     const useTx = (tx, sig) => {
       let t = deltaTransfers(tx, mine, owner);
@@ -919,12 +936,12 @@
       const failed = [];
       for (let i = 0; i < queue.length; i += CONC) {
         const chunk = queue.slice(i, i + CONC);
-        const txs = await Promise.all(chunk.map(s =>
-          rpcCall('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]).catch(() => undefined)));
+        const txs = await Promise.all(chunk.map(s => getTxMulti(s.signature)));
         txs.forEach((tx, j) => {
           if (tx === undefined) { failed.push(chunk[j]); return; }
+          if (tx === null) { stats.gone++; return; } // pruned on evry reachable node
           stats.ok++;
-          if (tx) useTx(tx, chunk[j]);
+          useTx(tx, chunk[j]);
         });
         if (onProgress) onProgress(label, Math.min(stats.ok + failed.length, stats.sigs), stats.sigs, pass);
         await new Promise(r => setTimeout(r, WAIT));
@@ -993,9 +1010,18 @@
       const discoveredAccts = [], discoveredOwners = new Set();
       const unknown = [...candAccts.entries()].filter(([a, c]) => c.srcOwner !== TREASURY && c.srcOwner !== REVSHARE_WALLET);
       let closedMap = {};
-      if (unknown.length) {
-        const r = await rpcCall('getMultipleAccounts', [unknown.map(([a]) => a).slice(0, 100), { encoding: 'base64' }]).catch(() => null);
-        ((r && r.value) || []).forEach((acc, j) => { closedMap[unknown[j][0]] = (acc === null); });
+      // getMultipleAccounts caps at 100 per call — chunk, dont truncate. a dropped
+      // chunk = old treasury accts never discovered = contributors silently missing.
+      let closedFail = 0;
+      for (let i = 0; i < unknown.length; i += 100) {
+        const batch = unknown.slice(i, i + 100);
+        let r = null;
+        for (let attempt = 0; attempt < 2 && r === null; attempt++) {
+          r = await rpcCall('getMultipleAccounts', [batch.map(([a]) => a), { encoding: 'base64' }]).catch(() => null);
+          if (r === null && attempt === 0) await new Promise(res => setTimeout(res, 800));
+        }
+        if (!r || !r.value) { closedFail += batch.length; continue; }
+        r.value.forEach((acc, j) => { closedMap[batch[j][0]] = (acc === null); });
       }
       for (const [addr, c] of candAccts) {
         if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
@@ -1008,16 +1034,26 @@
 
       // 2) treasury scan across configured identity + evryding discovered
       const tre = await scanWallet(TREASURY, 'treasury', onP, discoveredAccts);
-      for (const vo of discoveredOwners) {
-        if (vo === TREASURY || vo === DEV_WALLET) continue;
-        const extra = await scanWallet(vo, 'treasury (vault)', onP);
-        tre.ins.push(...extra.ins); tre.outs.push(...extra.outs);
-        tre.stats.atas += extra.stats.atas; tre.stats.sigs += extra.stats.sigs;
-        tre.stats.ok += extra.stats.ok; tre.stats.fail += extra.stats.fail;
-      }
+      // discovered accts ride along in da treasury scan (extraAccts). we do NOT
+      // scan discovered OWNER wallets — da closed+sweep-sized heuristic can catch
+      // a real holder who sent 2 dev, n treating dem as treasury scrambles da
+      // accounting n vaporizes their deposits.
       const rev = await scanWallet(REVSHARE_WALLET, 'revshare', onP);
 
-      const internal = new Set([...INTERNAL_WALLETS, ...discoveredOwners]);
+      // walkTransfers fallback only knows da destination token ACCT — resolve owners
+      // so sweep/return/payout detection works on dat path too
+      let unresolvedOuts = 0;
+      {
+        const need = new Set([...tre.outs, ...rev.outs]
+          .filter(o => !o.destOwner && o.dest && o.dest !== 'balance-delta').map(o => o.dest));
+        const om = need.size ? await ownersOf(need) : {};
+        for (const o of [...tre.outs, ...rev.outs]) {
+          if (!o.destOwner && om[o.dest]) o.destOwner = om[o.dest];
+          if (!o.destOwner) unresolvedOuts++;
+        }
+      }
+
+      const internal = new Set(INTERNAL_WALLETS);
       const nodeDiag = (() => {
         const agg = {};
         for (const s of SIG_NODE_STATS) { agg[s.node] = agg[s.node] || { ok: 0, err: 0, n: 0 }; if (s.n < 0) agg[s.node].err++; else { agg[s.node].ok++; agg[s.node].n += s.n; } }
@@ -1030,6 +1066,10 @@
         '  \u00b7\u00b7  revshare: ' + rev.stats.atas + ' acct \u00b7 ' + rev.stats.ok + '/' + rev.stats.sigs + ' txs' +
         (rev.stats.fail ? ' (' + rev.stats.fail + ' dropped)' : '') +
         (discoveredAccts.length ? '  \u00b7\u00b7  found ' + discoveredAccts.length + ' old acct' : '') +
+        (closedFail ? '  \u00b7\u00b7  WARN ' + closedFail + ' acct unchecked (discovery incomplete)' : '') +
+        (SIG_TRUNC ? '  \u00b7\u00b7  WARN sig cap hit on ' + SIG_TRUNC + ' addr (old history cut)' : '') +
+        ((tre.stats.gone + rev.stats.gone) ? '  \u00b7\u00b7  WARN ' + (tre.stats.gone + rev.stats.gone) + ' tx pruned on all nodes' : '') +
+        (unresolvedOuts ? '  \u00b7\u00b7  WARN ' + unresolvedOuts + ' outs w/ unknown dest owner' : '') +
         '  \u00b7\u00b7  ' + nodeDiag;
       $('cSrcLine').textContent = diag;
       console.log('contrib scan:', diag);
@@ -1085,7 +1125,7 @@
       for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
 
       CONTRIB_ROWS = [...agg.entries()]
-        .filter(([w, a]) => a.locked > 0n || a.pending > 0n)   // fully refunded/returned wallets dont count
+        .filter(([w, a]) => a.deposited > 0n)   // evry contributor gets a row — refunded ones show returned
         .map(([w, a]) => ({
           wallet: w, locked: a.locked, pending: a.pending,
           deposited: a.deposited, returned: a.returned,

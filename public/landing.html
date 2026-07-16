@@ -1107,13 +1107,19 @@
   /* === KONFIGURASHUN ==========================================
      Set these 3 constants b4 u deploy dis:
      ============================================================ */
-  const DEADLINE_ISO = '2026-05-31T23:59:59Z';   // next benis lock
+  const DEADLINE_ISO = null;   // null = auto: end of da current month (utc). set an iso string 2 pin one lock
   const DEPOSIT_URL  = null;   // e.g. 'https://app.spurdo.xyz/deposit'. null = scroll to countdown
   const X_URL        = 'https://x.com/SpurdoTweets';
 
-  const deadline = DEADLINE_ISO
-    ? new Date(DEADLINE_ISO)
-    : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  // da lock runs monthly, so da deadline iz da end of da current month in utc —
+  // recomputed evry tick so it rolls over on its own n never needs a redeploy.
+  // utc keeps it da same moment for everyone, not per-visitor local time.
+  // Date.UTC normalizes month 12 → january of da next year.
+  function currentDeadline() {
+    if (DEADLINE_ISO) return new Date(DEADLINE_ISO);
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
+  }
 
   /* === CTA buttons ========================================== */
   function wireCta(id) {
@@ -1138,7 +1144,7 @@
   function pad(n) { return String(n).padStart(2, '0'); }
 
   function tick() {
-    const ms = deadline - new Date();
+    const ms = currentDeadline() - new Date();
     if (ms <= 0) {
       $d.textContent = '00';
       $h.textContent = '00';

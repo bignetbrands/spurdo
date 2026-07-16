@@ -11,7 +11,7 @@ import { runFullScan, jstr, jparse } from "@/lib/revshare-scan";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const CACHE_KEY = "revshare:data:v2";
+const CACHE_KEY = "revshare:data:v3";
 const LOCK_KEY = "revshare:scan-lock";
 const MAX_AGE_MS = 5 * 24 * 3600 * 1000;
 
@@ -21,12 +21,22 @@ function r(): Redis | null {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null; // degrade: scan evry call, no shared cache
-  _redis = new Redis({ url, token });
+  // automaticDeserialization iz ON by default: upstash stores our json string raw,
+  // den JSON.parses it on read n hands back an OBJECT. dat made jparse throw (so da
+  // cache never hit n evry request rescanned) n made respond() emit "[object Object]",
+  // which da page reads as a bad payload n falls back 2 da pruned browser rpc.
+  _redis = new Redis({ url, token, automaticDeserialization: false });
   return _redis;
 }
 
 async function readCache(): Promise<string | null> {
-  try { return (await r()?.get<string>(CACHE_KEY)) ?? null; } catch { return null; }
+  try {
+    const v = await r()?.get<unknown>(CACHE_KEY);
+    if (v === null || v === undefined) return null;
+    // belt n braces: if anyding ever hands back a parsed object, re-stringify it.
+    // da {$b:"…"} bigint markers r plain objects, so dey survive da round trip.
+    return typeof v === "string" ? v : JSON.stringify(v);
+  } catch { return null; }
 }
 async function writeCache(payload: string) {
   try { await r()?.set(CACHE_KEY, payload); } catch { /* cacheless iz fine */ }
