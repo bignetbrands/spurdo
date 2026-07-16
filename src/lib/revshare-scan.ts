@@ -18,6 +18,12 @@ export const TREASURY = "ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd";
 export const DEV_WALLET = "G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV";
 export const REVSHARE_WALLET = "Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ";
 const INTERNAL_WALLETS = [TREASURY, DEV_WALLET, REVSHARE_WALLET];
+// payouts routed thru an exchange deposit address — on-chain dest iz da exchange,
+// da real recipient iz documented off-chain (multisig payout sheet). map dest → locker.
+const PAYOUT_PROXIES: Record<string, string> = {
+  // changenow deposit addr used for da jul 1 2026 (round 1) payout 2 da top locker
+  "3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc": "Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp",
+};
 const STREAMFLOW_PROGRAM = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m";
 const STREAMFLOW_API = "https://api-public.streamflow.finance";
 
@@ -201,6 +207,7 @@ async function allSigsMulti(addr: string, nodeStats: NodeStat[], cap = SIG_CAP):
 /* ---------- transfer extraction ---------- */
 type Flow = { owner: string; srcAddr?: string; srcOwner?: string; amount: bigint; time: number; sig: string };
 type OutFlow = { dest: string; destOwner?: string; amount: bigint; time: number; sig: string };
+type SolOut = { dest: string; lamports: bigint; time: number; sig: string };
 
 function deltaTransfers(tx: any, mine: Set<string>, scanOwner: string) {
   const res: { ins: Omit<Flow, "time" | "sig">[]; outs: Omit<OutFlow, "time" | "sig">[] } = { ins: [], outs: [] };
@@ -285,13 +292,25 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
   }
   const sigs = [...sigMap.values()];
   const stats: ScanStats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, trunc, gone: 0 };
-  const ins: Flow[] = [], outs: OutFlow[] = [];
+  const ins: Flow[] = [], outs: OutFlow[] = [], solOuts: SolOut[] = [];
   const useTx = (tx: any, sig: SigInfo) => {
     let t = deltaTransfers(tx, mine, owner);
     if (!t.ins.length && !t.outs.length) t = walkTransfers(tx, mine);
     const bt = sig.blockTime || (tx && tx.blockTime) || 0;
     for (const x of t.ins) ins.push({ ...x, time: bt, sig: sig.signature });
     for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
+    // sol outflows — revshare payouts r plain SOL transfers, invisible 2 token deltas.
+    // dest = biggest lamport gainer; amount = wat dey got (excludes da fee).
+    const keys: string[] = (((tx.transaction || {}).message || {}).accountKeys || [])
+      .map((k: any) => (typeof k === "string" ? k : k && k.pubkey));
+    const iOwn = keys.indexOf(owner);
+    const preB = (tx.meta && tx.meta.preBalances) || [], postB = (tx.meta && tx.meta.postBalances) || [];
+    if (iOwn >= 0 && preB.length && (postB[iOwn] ?? 0) < (preB[iOwn] ?? 0)) {
+      let best = -1, gain = 0;
+      keys.forEach((_, i) => { const g = (postB[i] ?? 0) - (preB[i] ?? 0); if (i !== iOwn && g > gain) { gain = g; best = i; } });
+      if (best >= 0 && gain >= 1_000_000) // ≥0.001 sol — ignores rent dust
+        solOuts.push({ dest: keys[best], lamports: BigInt(gain), time: bt, sig: sig.signature });
+    }
   };
   let queue = sigs;
   for (let pass = 0; pass < 3 && queue.length; pass++) {
@@ -313,7 +332,7 @@ async function scanWallet(owner: string, nodeStats: NodeStat[], extraAccts?: str
     if (queue.length) await sleep(1500); // let da rate limiter forgive us b4 da next pass
   }
   stats.fail += queue.length;
-  return { ins, outs, stats };
+  return { ins, outs, solOuts, stats };
 }
 
 /* ---------- locks ---------- */
@@ -380,6 +399,7 @@ async function fetchLocksApi(): Promise<Lock[]> {
 }
 
 /* ---------- full scan ---------- */
+// paid = SOL lamports received from da revshare wallet (payouts r sol, not $spurdo)
 export type ContribRow = {
   wallet: string; locked: bigint; pending: bigint; deposited: bigint; returned: bigint;
   n: number; first: number; last: number; paid: bigint; pct: number;
@@ -487,12 +507,12 @@ export async function runFullScan(): Promise<RevshareData> {
   }
   if (tre.stats.fail > 0 && tre.ins.length === 0) throw new Error(`rpc dropped ${tre.stats.fail} of ${tre.stats.sigs} treasury txs`);
 
-  // payouts per wallet
+  // payouts per wallet — SOL lamports out of da revshare wallet.
+  // exchange-deposit dests (changenow etc) map back 2 da locker via PAYOUT_PROXIES.
   const paid = new Map<string, bigint>();
-  for (const o of rev.outs) {
-    const w = o.destOwner || o.dest;
-    if (!w || w === "balance-delta") continue;
-    paid.set(w, (paid.get(w) || 0n) + o.amount);
+  for (const o of rev.solOuts) {
+    const w = PAYOUT_PROXIES[o.dest] || o.dest;
+    paid.set(w, (paid.get(w) || 0n) + o.lamports);
   }
 
   // event timeline: deposit→pending, sweep→locked, returns drain pending den locked

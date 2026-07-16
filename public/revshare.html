@@ -468,6 +468,10 @@
   const REVSHARE_WALLET    = 'Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ'; // pays monthly revshare out
   const LOCK_SENDERS       = [DEV_WALLET, TREASURY];                          // api fallback filters
   const INTERNAL_WALLETS   = [TREASURY, DEV_WALLET, REVSHARE_WALLET];         // not contributors
+  // payout routed thru an exchange deposit addr → real locker (multisig payout sheet)
+  const PAYOUT_PROXIES = {
+    '3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc': 'Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp',
+  };
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAMFLOW_API     = 'https://api-public.streamflow.finance';
   const RPC_URLS = [
@@ -497,7 +501,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v7';
+  const CACHE_KEY = 'spurdo_revshare_v8';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -605,6 +609,10 @@
     return BigInt(s);
   }
 
+  function fmtSol(lamports) {
+    const v = Number(lamports) / 1e9;
+    return (v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(4)) + ' SOL';
+  }
   function fmtAmt(n) {
     if (!isFinite(n)) return '–';
     if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.00$/, '') + 'b';
@@ -925,13 +933,22 @@
     }
     const sigs = [...sigMap.values()];
     const stats = { atas: mine.size, sigs: sigs.length, ok: 0, fail: 0, gone: 0 };
-    const ins = [], outs = [];
+    const ins = [], outs = [], solOuts = [];
     const useTx = (tx, sig) => {
       let t = deltaTransfers(tx, mine, owner);
       if (!t.ins.length && !t.outs.length) t = walkTransfers(tx, mine);
       const bt = sig.blockTime || (tx && tx.blockTime) || 0;
       for (const x of t.ins)  ins.push({ ...x, time: bt, sig: sig.signature });
       for (const x of t.outs) outs.push({ ...x, time: bt, sig: sig.signature });
+      // sol outflows — revshare payouts r plain SOL, invisible 2 token deltas
+      const keys = (((tx.transaction || {}).message || {}).accountKeys || []).map(k => (typeof k === 'string' ? k : k && k.pubkey));
+      const iOwn = keys.indexOf(owner);
+      const preB = (tx.meta && tx.meta.preBalances) || [], postB = (tx.meta && tx.meta.postBalances) || [];
+      if (iOwn >= 0 && preB.length && (postB[iOwn] ?? 0) < (preB[iOwn] ?? 0)) {
+        let best = -1, gain = 0;
+        keys.forEach((_, i) => { const g = (postB[i] ?? 0) - (preB[i] ?? 0); if (i !== iOwn && g > gain) { gain = g; best = i; } });
+        if (best >= 0 && gain >= 1000000) solOuts.push({ dest: keys[best], lamports: BigInt(gain), time: bt, sig: sig.signature });
+      }
     };
     let queue = sigs;
     for (let pass = 0; pass < 2 && queue.length; pass++) {
@@ -954,7 +971,7 @@
       if (queue.length && pass === 0) await new Promise(r => setTimeout(r, 1500));
     }
     stats.fail += queue.length;
-    return { ins, outs, stats };
+    return { ins, outs, solOuts, stats };
   }
 
   async function ownersOf(ataSet) {
@@ -1083,13 +1100,11 @@
         throw new Error('rpc dropped ' + tre.stats.fail + ' of ' + tre.stats.sigs + ' treasury txs');
       }
 
-      // map payouts back 2 contributor wallets
-      const needLookup = new Set(rev.outs.filter(o => !o.destOwner && o.dest !== 'balance-delta').map(o => o.dest));
-      const ownerMap = needLookup.size ? await ownersOf(needLookup) : {};
+      // payouts = SOL out of da revshare wallet; exchange deposits map back via proxies
       const paid = new Map();
-      for (const o of rev.outs) {
-        const w = o.destOwner || ownerMap[o.dest] || o.dest;
-        paid.set(w, (paid.get(w) || 0n) + o.amount);
+      for (const o of rev.solOuts) {
+        const w = PAYOUT_PROXIES[o.dest] || o.dest;
+        paid.set(w, (paid.get(w) || 0n) + o.lamports);
       }
 
       // event timeline: deposits go pending → sweep 2 dev locks dem → returns drain pending (refund) den locked (unlock)
@@ -1169,19 +1184,19 @@
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
-        '<td>' + (r.paid > 0n ? fmtAmt(toUi(r.paid)) : '\u2013') + '</td>';
+        '<td>' + (r.paid > 0n ? fmtSol(r.paid) : '\u2013') + '</td>';
       tb.appendChild(tr);
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
   }
 
   function downloadCsv() {
-    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,revshare_paid\n';
+    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,revshare_paid_sol\n';
     const lines = CONTRIB_ROWS.map(r => [
       r.wallet, toUi(r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
       r.last ? new Date(r.last * 1000).toISOString() : '',
-      toUi(r.paid),
+      Number(r.paid) / 1e9, // sol
     ].join(','));
     const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
