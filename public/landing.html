@@ -891,7 +891,7 @@
 <div class="container">
 
   <!-- Visitor counter for 2008 flavor -->
-  <div class="visitor">u r visitor #0000<span class="blink">3</span> :D</div>
+  <div class="visitor">u r visitor #<span id="visitorNum">010489</span><span class="blink">_</span> :D</div>
 
   <!-- HERO (top of page) -->
   <section class="hero">
@@ -1085,7 +1085,7 @@
       <ellipse cx="23" cy="27" rx="4" ry="2" fill="#eacf94" stroke="#1a1a1a" stroke-width="1" transform="rotate(12 23 27)"/>
       <ellipse cx="20" cy="26" rx="1.8" ry="1.4" fill="#1a1a1a"/>
     </svg>
-    <span>sburdish? :D</span>
+    <span>Translator :D</span>
   </button>
 
   <div class="sbur-panel" id="sburPanel" role="dialog" aria-label="sburdish translator">
@@ -1166,6 +1166,18 @@
   }
   tick();
   const tId = setInterval(() => { if (!tick()) clearInterval(tId); }, 1000);
+
+  /* === VISITOR COUNTER ========================================
+     global count via /api/visits (upstash) — +1 per page visit.
+     on error da floor number stays, page never breaks.
+     ============================================================ */
+  fetch('/api/visits')
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.n) document.getElementById('visitorNum').textContent =
+        String(d.n).padStart(6, '0');
+    })
+    .catch(() => {});
 
   /* === TROLL BUTTON ============================================
      Evades cursor on hover up to 3 times, then lets you click.
