@@ -1,4 +1,13 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
+
+/** Constant-time string compare — length leak only, never content. */
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 /**
  * Check the Authorization header against ADMIN_SECRET env var.
@@ -17,7 +26,7 @@ export function checkAdminAuth(request: Request): NextResponse | null {
     );
   }
   const header = request.headers.get("authorization");
-  if (header !== `Bearer ${secret}`) {
+  if (!header || !safeEqual(header, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
@@ -36,7 +45,7 @@ export function checkCronAuth(request: Request): NextResponse | null {
     );
   }
   const header = request.headers.get("authorization");
-  if (header !== `Bearer ${secret}`) {
+  if (!header || !safeEqual(header, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
