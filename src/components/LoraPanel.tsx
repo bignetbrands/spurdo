@@ -224,9 +224,18 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
       // The `upload()` helper hits our /upload-token endpoint to get a signed
       // token, then PUTs the file directly to Blob.
       const { upload } = await import("@vercel/blob/client");
+      // Trade the Bearer secret for a short-lived single-use ticket — the
+      // blob client controls its own Authorization header, and the secret
+      // must never ride in a URL (logs, browser history).
+      const ticketRes = await fetch("/api/admin/lora/upload-ticket", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminSecret}` },
+      });
+      if (!ticketRes.ok) throw new Error(`upload-ticket failed: HTTP ${ticketRes.status}`);
+      const { ticket } = await ticketRes.json();
       const blob = await upload(`loras/${trainedFile.name}`, trainedFile, {
         access: "public",
-        handleUploadUrl: `/api/admin/lora/upload-token?secret=${encodeURIComponent(adminSecret)}`,
+        handleUploadUrl: `/api/admin/lora/upload-token?ticket=${encodeURIComponent(ticket)}`,
         multipart: true, // splits large files into chunks for parallel upload
       });
       addLog(`upload complete, registering…`, "info");
