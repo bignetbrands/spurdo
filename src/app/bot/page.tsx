@@ -95,7 +95,20 @@ interface ServerEvent {
 }
 
 export default function BotDashboard() {
-  const [secret, setSecret] = useState("");
+  const [secret, setSecretState] = useState("");
+  // sessionStorage keeps da secret across reloads but dies wit da tab —
+  // same posture as memory-only, minus retyping it evry refresh
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? sessionStorage.getItem("spurdo_admin_secret") : null;
+    if (saved) setSecretState(saved);
+  }, []);
+  const setSecret = useCallback((v: string) => {
+    setSecretState(v);
+    try {
+      if (v) sessionStorage.setItem("spurdo_admin_secret", v);
+      else sessionStorage.removeItem("spurdo_admin_secret");
+    } catch { /* private mode etc — memory-only iz fine */ }
+  }, []);
   const [authenticated, setAuthenticated] = useState(false);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [pillars, setPillars] = useState<PillarSummary[]>([]);
@@ -150,6 +163,10 @@ export default function BotDashboard() {
         if (res.status === 401) {
           setAuthenticated(false);
           if (!silent) addLog("auth failed — check the password", "error");
+          return;
+        }
+        if (!res.ok) {
+          if (!silent) addLog(`status fetch failed: HTTP ${res.status}`, "error");
           return;
         }
         const data = (await res.json()) as StatusData;
@@ -343,6 +360,16 @@ export default function BotDashboard() {
   }, [composeResult, status, customImageFile, authedFetch, addLog, fetchActivity, fetchServerEvents]);
 
   // Auto-poll status + activity + events every 30s when authenticated
+  // Keep the provider selection inside the allowed list (reconciling in an
+  // effect — doing it during render caused an extra pass + flicker)
+  useEffect(() => {
+    const allowed = status?.config.allowedImageProviders ?? ["bank", "fal", "openai", "custom"];
+    if (allowed.length > 0 && !allowed.includes(imageProvider)) {
+      setImageProvider(allowed[0] as "fal" | "openai" | "bank" | "custom");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.config.allowedImageProviders]);
+
   useEffect(() => {
     if (!authenticated) return;
     fetchPillars();
@@ -544,7 +571,7 @@ export default function BotDashboard() {
         {/* COMPOSE — M2 */}
         <section style={S.card}>
           <h2 style={S.h2}>✏ COMPOSE</h2>
-          <p style={S.hint}>generate a tweet on demand. m2 doesnt post — just preview. m3 will wire posting.</p>
+          <p style={S.hint}>generate a tweet on demand — preview first, den da 🚀 button posts it live.</p>
 
           <div style={S.composeForm}>
             <label style={S.label}>
@@ -585,10 +612,6 @@ export default function BotDashboard() {
                 {(() => {
                   const allowed = status?.config.allowedImageProviders ?? ["bank", "fal", "openai", "custom"];
                   const current = allowed.includes(imageProvider) ? imageProvider : allowed[0];
-                  // If state is out of sync with allowed list, correct it
-                  if (current !== imageProvider && allowed.length > 0) {
-                    setTimeout(() => setImageProvider(current as "fal" | "openai" | "bank" | "custom"), 0);
-                  }
                   if (allowed.length === 1) {
                     return (
                       <div style={S.providerLocked}>

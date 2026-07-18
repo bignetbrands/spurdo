@@ -285,6 +285,7 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
   }, [authedFetch]);
 
   const runStrengthSweep = useCallback(async () => {
+    if (!confirm("Run the strength sweep? This fires 7 paid image generations (~$0.50).")) return;
     setSweepRunning(true);
     setStrengthSweepResults(null);
     setChosenStrength(null);
@@ -314,6 +315,7 @@ export function LoraPanel({ authedFetch, addLog, adminSecret }: Props) {
   }, [sweepTweetText, sweepPillarId, authedFetch, addLog]);
 
   const runGuidanceSweep = useCallback(async () => {
+    if (!confirm("Run the guidance sweep? This fires 4 paid image generations (~$0.30).")) return;
     if (chosenStrength === null) {
       addLog("pick a winning strength first", "warn");
       return;

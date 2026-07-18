@@ -228,7 +228,7 @@ export interface ExecuteReplyOptions {
   /** If true, attach a random bank meme (default: false — replies are usually text-only) */
   includeImage?: boolean;
   /** Trigger label for the event log */
-  trigger: "cron-mention" | "cron-family" | "manual";
+  trigger: "cron-mention" | "manual";
 }
 
 export interface ExecuteReplyResult {

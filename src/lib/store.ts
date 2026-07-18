@@ -210,7 +210,6 @@ export async function getLastPostedAt(): Promise<Date | null> {
 
 const MENTION_SINCE_KEY = () => kvKey("replies:since-id");
 const REPLIED_SET_KEY = () => kvKey("replies:processed");
-const FAMILY_LAST_REPLIED_KEY = () => kvKey("replies:family-last");
 
 /** Highest mention ID we've fetched. Returns undefined if first run. */
 export async function getMentionSinceId(): Promise<string | undefined> {
@@ -254,16 +253,6 @@ export async function unreserveMention(mentionId: string): Promise<void> {
   await getRedis().srem(REPLIED_SET_KEY(), mentionId);
 }
 
-/** Track when we last replied to a given family account, so we don't
- *  reply too frequently. Returns ISO timestamp or null. */
-export async function getFamilyAccountLastReplied(handle: string): Promise<string | null> {
-  const v = await getRedis().hget<string>(FAMILY_LAST_REPLIED_KEY(), handle.toLowerCase());
-  return v || null;
-}
-
-export async function setFamilyAccountLastReplied(handle: string, ts: string = new Date().toISOString()): Promise<void> {
-  await getRedis().hset(FAMILY_LAST_REPLIED_KEY(), { [handle.toLowerCase()]: ts });
-}
 
 function safeJson<T>(s: string): T | null {
   try {
