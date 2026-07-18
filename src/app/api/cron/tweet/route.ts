@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { checkCronAuth } from "@/lib/auth";
-import { recordHeartbeat } from "@/lib/store";
+import { recordHeartbeat, acquireLock, releaseLock } from "@/lib/store";
 import { decideNext } from "@/lib/scheduler";
 import { executeTweet } from "@/lib/orchestrator";
 import { logEvent } from "@/lib/events";
+
+// Shared with /api/admin/post-now: whoever holds it owns the whole
+// decide→post→record window, so the cron and a dashboard click can never
+// both pass the gap/daily-count gates and double-post.
+const POSTING_LOCK = "posting";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -27,8 +32,44 @@ export async function GET(request: Request) {
   const unauthorized = checkCronAuth(request);
   if (unauthorized) return unauthorized;
 
-  await recordHeartbeat("cron:tweet");
+  try {
+    return await run();
+  } catch (err) {
+    // Never bubble a 5xx out of a posting cron — Vercel retries non-200,
+    // and a retried run re-opens the double-post window.
+    await logEvent("error", "cron-tweet: unhandled error", {
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => undefined);
+    return NextResponse.json({
+      posted: false,
+      error: `unhandled: ${err instanceof Error ? err.message : err}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
 
+async function run(): Promise<NextResponse> {
+  await recordHeartbeat("cron:tweet").catch(() => undefined);
+
+  // ── Posting lock — spans decide→post→record ──
+  const lockToken = await acquireLock(POSTING_LOCK, 110);
+  if (!lockToken) {
+    await logEvent("cron", "skip: posting lock held (post-now or previous run active)").catch(() => undefined);
+    return NextResponse.json({
+      posted: false,
+      reason: "posting lock held",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  try {
+    return await decideAndPost();
+  } finally {
+    await releaseLock(POSTING_LOCK, lockToken);
+  }
+}
+
+async function decideAndPost(): Promise<NextResponse> {
   // ── Decide ──
   const decision = await decideNext();
 
