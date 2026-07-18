@@ -6,7 +6,6 @@ import { recordTweet, getRecentTweets, isKillSwitchActive } from "./store";
 import { logEvent } from "./events";
 import { loadConfig } from "./config";
 import { BudgetExceededError } from "./budget";
-import { retryWithBackoff } from "./retry";
 import { buildReplyPrompt } from "./prompts";
 import type { PillarId, ProjectConfig } from "@/types";
 
@@ -138,19 +137,13 @@ export async function executeTweet(opts: ExecuteTweetOptions): Promise<ExecuteTw
   }
 
   // ── Step 3: Post ──
+  // NO retry around the create call: tweet creation is not idempotent, and
+  // the errors worth retrying (5xx, socket hang up) are exactly the ones X
+  // can return AFTER the tweet was created — a retry would double-post.
+  // A transient failure just skips this slot; the cron returns in 30 min.
   let posted: Awaited<ReturnType<typeof postTweet>>;
   try {
-    // Wrap the X API call in retry — transient failures are common
-    const { result } = await retryWithBackoff(
-      () => postTweet({ text, imageUrl }),
-      {
-        maxAttempts: 3,
-        initialDelayMs: 2000,
-        onRetry: (attempt, err) =>
-          console.warn(`[orchestrator] post retry ${attempt}:`, err instanceof Error ? err.message : err),
-      }
-    );
-    posted = result;
+    posted = await postTweet({ text, imageUrl });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await logEvent("error", `post failed after retries: ${msg}`, { pillar: opts.pillar, trigger, text });
@@ -241,6 +234,9 @@ export interface ExecuteReplyOptions {
 export interface ExecuteReplyResult {
   ok: boolean;
   error?: string;
+  /** true when the failure happened at the X post call — the tweet MAY have
+   *  been created despite the error, so callers must not retry or unreserve */
+  failedAtPost?: boolean;
   budgetExceeded?: { resource: string; used: number; limit: number };
   tweetId?: string;
   url?: string;
@@ -295,7 +291,7 @@ export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteRe
       return {
         ok: false,
         error: err.message,
-        budgetExceeded: { resource: "tokens", used: 0, limit: 0 },
+        budgetExceeded: { resource: err.resource, used: err.used, limit: err.limit },
         parentTweetId: opts.parentTweetId,
         authorUsername: opts.authorUsername,
         elapsedMs: Date.now() - startTime,
@@ -340,23 +336,14 @@ export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteRe
   }
 
   // ── Post reply ──
+  // Single attempt — same non-idempotency reasoning as executeTweet's post.
   let posted: PostTweetResult;
   try {
-    const retryResult = await retryWithBackoff(
-      () =>
-        postTweet({
-          text: replyText,
-          imageUrl,
-          inReplyToTweetId: opts.parentTweetId,
-        }),
-      {
-        maxAttempts: 2,
-        initialDelayMs: 2000,
-        onRetry: (attempt, err) =>
-          console.warn(`[orchestrator/reply] retry ${attempt}:`, err instanceof Error ? err.message : err),
-      }
-    );
-    posted = retryResult.result;
+    posted = await postTweet({
+      text: replyText,
+      imageUrl,
+      inReplyToTweetId: opts.parentTweetId,
+    });
   } catch (err) {
     await logEvent("error", `reply post failed for @${opts.authorUsername}`, {
       parentTweetId: opts.parentTweetId,
@@ -366,6 +353,7 @@ export async function executeReply(opts: ExecuteReplyOptions): Promise<ExecuteRe
     return {
       ok: false,
       error: `X post failed: ${err instanceof Error ? err.message : err}`,
+      failedAtPost: true,
       parentTweetId: opts.parentTweetId,
       authorUsername: opts.authorUsername,
       elapsedMs: Date.now() - startTime,

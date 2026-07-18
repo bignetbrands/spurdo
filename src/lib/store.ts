@@ -80,9 +80,39 @@ export async function getHeartbeat(
 }
 
 // ============================================================
-// M1 STUB — more methods (recordTweet, getDailyState, hasReplied, etc.)
-// will arrive in M2/M3 as the orchestrator and scheduler need them.
+// RUN LOCKS
 // ============================================================
+// Redis SET NX locks. Two uses:
+//   • per-cron run lock — stops overlapping invocations of the same cron
+//     (replies cron runs every 300s with a multi-minute budget; a slow run
+//     must not overlap the next one or mentions get double-replied)
+//   • global posting lock — spans decide→post→record so the tweet cron and
+//     the dashboard's post-now can never both pass the gap/daily-count
+//     gates and double-post
+// TTL is a safety valve: if the function is killed mid-run the lock frees
+// itself. Releasing someone else's expired-and-reacquired lock is avoided
+// by storing a per-acquisition token and checking it before DEL.
+// ============================================================
+
+export async function acquireLock(name: string, ttlSeconds: number): Promise<string | null> {
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    const ok = await getRedis().set(kvKey(`lock:${name}`), token, { nx: true, ex: ttlSeconds });
+    return ok !== null ? token : null;
+  } catch {
+    // KV down → treat as lock-not-acquired; callers skip the run rather
+    // than risk concurrent posting without coordination
+    return null;
+  }
+}
+
+export async function releaseLock(name: string, token: string): Promise<void> {
+  try {
+    const key = kvKey(`lock:${name}`);
+    const held = await getRedis().get<string>(key);
+    if (held === token) await getRedis().del(key);
+  } catch { /* ttl frees it */ }
+}
 
 // ============================================================
 // TWEET RECORDS (M3+)
@@ -184,8 +214,10 @@ const FAMILY_LAST_REPLIED_KEY = () => kvKey("replies:family-last");
 
 /** Highest mention ID we've fetched. Returns undefined if first run. */
 export async function getMentionSinceId(): Promise<string | undefined> {
-  const v = await getRedis().get<string>(MENTION_SINCE_KEY());
-  return v || undefined;
+  const v = await getRedis().get<string | number>(MENTION_SINCE_KEY());
+  // upstash auto-deserialization JSON.parses numeric-looking strings into
+  // numbers — normalize back, or length-based snowflake compares break
+  return v === null || v === undefined || v === "" ? undefined : String(v);
 }
 
 export async function setMentionSinceId(id: string): Promise<void> {
@@ -193,27 +225,33 @@ export async function setMentionSinceId(id: string): Promise<void> {
 }
 
 /**
- * Has this mention ID already been replied to?
- * Uses Redis SET semantics — O(1) check.
+ * Atomically reserve a mention for replying. SADD returns 1 only for the
+ * caller that actually added the member, so two overlapping runs can never
+ * both win the same mention — this replaces the old check-then-act pair
+ * (wasMentionReplied → post → markMentionReplied) whose check and mark
+ * straddled the network-bound post call.
  */
-export async function wasMentionReplied(mentionId: string): Promise<boolean> {
-  const v = await getRedis().sismember(REPLIED_SET_KEY(), mentionId);
-  return v === 1;
-}
-
-/**
- * Mark a mention as replied-to. Sets are bounded — we trim oldest
- * entries when set grows beyond limit (Redis SCARD + SPOP).
- */
-export async function markMentionReplied(mentionId: string): Promise<void> {
-  await getRedis().sadd(REPLIED_SET_KEY(), mentionId);
+export async function tryReserveMention(mentionId: string): Promise<boolean> {
+  const added = await getRedis().sadd(REPLIED_SET_KEY(), mentionId);
+  if (added !== 1) return false;
   // Soft cap: trim if we exceed 5000. SPOP removes random members so we
   // can't preserve "newest" — but the since_id watermark covers that
   // case, so trimming randomly is acceptable.
-  const size = await getRedis().scard(REPLIED_SET_KEY());
-  if (size > 5000) {
-    await getRedis().spop(REPLIED_SET_KEY(), size - 5000);
-  }
+  try {
+    const size = await getRedis().scard(REPLIED_SET_KEY());
+    if (size > 5000) await getRedis().spop(REPLIED_SET_KEY(), size - 5000);
+  } catch { /* trim is best-effort */ }
+  return true;
+}
+
+/**
+ * Give a reservation back. ONLY safe when we know nothing was posted
+ * (generation failed, kill switch, budget). Never call after a post
+ * attempt — an X error can arrive after the tweet was actually created,
+ * and unreserving would set up a double-reply.
+ */
+export async function unreserveMention(mentionId: string): Promise<void> {
+  await getRedis().srem(REPLIED_SET_KEY(), mentionId);
 }
 
 /** Track when we last replied to a given family account, so we don't

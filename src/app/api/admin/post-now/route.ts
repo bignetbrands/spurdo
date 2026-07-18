@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/auth";
 import { executeTweet } from "@/lib/orchestrator";
+import { acquireLock, releaseLock } from "@/lib/store";
 import { loadConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
 import type { PillarId } from "@/types";
@@ -107,16 +108,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: `unknown pillar: ${body.pillar}` }, { status: 400 });
   }
 
-  const result = await executeTweet({
-    pillar: body.pillar,
-    textOverride: body.text,
-    imageUrlOverride: body.imageUrl,
-    trigger: "manual",
-  });
-
-  if (!result.ok) {
-    return NextResponse.json(result, { status: result.budgetExceeded ? 402 : 500 });
+  // Same lock as the tweet cron — a dashboard click while the cron is mid
+  // decide→post would otherwise double-post past the gap/daily gates.
+  const lockToken = await acquireLock("posting", 110);
+  if (!lockToken) {
+    return NextResponse.json(
+      { ok: false, error: "posting lock held — the tweet cron is mid-post, try again in a minute" },
+      { status: 409 }
+    );
   }
 
-  return NextResponse.json(result);
+  try {
+    const result = await executeTweet({
+      pillar: body.pillar,
+      textOverride: body.text,
+      imageUrlOverride: body.imageUrl,
+      trigger: "manual",
+    });
+
+    if (!result.ok) {
+      return NextResponse.json(result, { status: result.budgetExceeded ? 402 : 500 });
+    }
+
+    return NextResponse.json(result);
+  } finally {
+    await releaseLock("posting", lockToken);
+  }
 }
