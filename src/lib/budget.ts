@@ -116,7 +116,42 @@ export async function assertTokenBudget(): Promise<void> {
 }
 
 /**
+ * Atomically reserve one image slot BEFORE generating. INCR-then-compare
+ * closes the old check-then-act race where N parallel gens (calibrate fires
+ * 7 at once) all read the same "used" value, all passed, and overshot the
+ * daily cap by N-1. Overshooters refund their increment and throw.
+ * Call refundImageSlot() if the generation then fails (no money spent).
+ */
+export async function reserveImageSlot(): Promise<void> {
+  if (isOverridden()) return;
+  const cfg = loadConfig();
+  const limit = cfg.pillars.dailyLimits?.images ?? 50;
+  const key = imagesKey();
+  const newCount = await r().incrby(key, 1);
+  if (newCount === 1) await r().expire(key, TTL_SECONDS);
+  if (newCount > limit) {
+    await r().decrby(key, 1).catch((err) =>
+      console.error("[budget] refund after over-reserve failed (cap now conservative):", err)
+    );
+    throw new BudgetExceededError("images", newCount - 1, limit);
+  }
+}
+
+/** Give a reserved image slot back after a FAILED generation. */
+export async function refundImageSlot(): Promise<void> {
+  if (isOverridden()) return;
+  try {
+    const n = await r().decrby(imagesKey(), 1);
+    if (n < 0) await r().incrby(imagesKey(), 1); // clamp — never go negative
+  } catch (err) {
+    // Failed refund over-counts (conservative direction) — log, dont hide
+    console.error("[budget] refundImageSlot failed:", err);
+  }
+}
+
+/**
  * Record an image generation. Call AFTER a successful gen.
+ * (Legacy post-paid path — the fal/openai flows now use reserveImageSlot.)
  */
 export async function recordImageSpend(count: number = 1): Promise<void> {
   const key = imagesKey();

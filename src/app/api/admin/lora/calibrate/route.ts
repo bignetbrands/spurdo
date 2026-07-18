@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { generateImage } from "@/lib/image-gen";
 import type { PillarId } from "@/types";
 
@@ -52,6 +53,24 @@ const GUIDANCE_SWEEP: number[] = [4.5, 5.5, 6.5, 7.5];
 export async function POST(request: Request) {
   const unauthorized = checkAdminAuth(request);
   if (unauthorized) return unauthorized;
+
+  // Rate limit: a sweep fires up to 7 parallel paid gens (~$0.80). Without
+  // this, a double-click or stuck retry loop repeats the full charge.
+  try {
+    const limit = await checkRateLimit("calibrate:global", 2, 60);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `rate limit hit (${limit.count}/${limit.limit} sweeps per minute). retry in ${limit.retryAfterSeconds}s.`,
+          retryAfterSeconds: limit.retryAfterSeconds,
+        },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+      );
+    }
+  } catch (err) {
+    console.warn("[calibrate] rate limit check failed, allowing through:", err);
+  }
 
   let body: SweepRequest;
   try {
