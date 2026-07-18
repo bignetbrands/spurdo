@@ -6,7 +6,7 @@ import { loadConfig } from "./config";
 import { buildImagePrompt } from "./prompts";
 import { generateImageScene } from "./claude";
 import { getActiveLoraUrl } from "./lora";
-import { assertImageBudget, recordImageSpend } from "./budget";
+import { reserveImageSlot, refundImageSlot } from "./budget";
 import { retryWithBackoff } from "./retry";
 import { pickMemeForPillar, pickMemeForTweet } from "./meme-bank";
 import { resolveStyleLoras } from "./style-loras";
@@ -126,12 +126,20 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
 
   // ── OPENAI: direct route, no stack involvement ──
   if (requested === "openai") {
-    await assertImageBudget();
+    // Reserve-then-act: the slot is counted before money moves, so parallel
+    // callers can never all sneak past the same "used" reading. Refund on
+    // failure — no money was spent.
+    await reserveImageSlot();
     const sceneToUse = await resolveScene(opts);
     const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", sceneToUse);
     const startTime = Date.now();
-    const result = await generateViaOpenAI(built.prompt);
-    await recordImageSpend(1).catch(() => undefined);
+    let result: Awaited<ReturnType<typeof generateViaOpenAI>>;
+    try {
+      result = await generateViaOpenAI(built.prompt);
+    } catch (err) {
+      await refundImageSlot();
+      throw err;
+    }
     return {
       ...result,
       promptSent: built.prompt,
@@ -140,7 +148,22 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
   }
 
   // ── FAL: dispatch by configured gen stack ──
-  await assertImageBudget();
+  await reserveImageSlot();
+  try {
+    return await runFalDispatch(cfg, opts);
+  } catch (err) {
+    // Nothing was generated — give the slot back.
+    await refundImageSlot();
+    throw err;
+  }
+}
+
+/** The fal/bank dispatch body — split out so the budget slot logic above
+ *  can refund on ANY throw without re-indenting the whole switch. */
+async function runFalDispatch(
+  cfg: ReturnType<typeof loadConfig>,
+  opts: GenerateImageOptions
+): Promise<GenerateImageResult> {
   const sceneToUse = await resolveScene(opts);
   const built = buildImagePrompt(cfg, opts.pillarId, opts.tweetText || "", sceneToUse);
   const startTime = Date.now();
@@ -240,8 +263,6 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
       throw new Error(`unsupported genStack: ${exhaustive}`);
     }
   }
-
-  await recordImageSpend(1).catch(() => undefined);
 
   return {
     ...result,
