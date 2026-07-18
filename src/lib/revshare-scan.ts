@@ -32,7 +32,6 @@ function rpcUrls(): string[] {
     process.env.SOLANA_RPC,
     "https://api.mainnet-beta.solana.com",
     "https://solana-rpc.publicnode.com",
-    "https://solana.drpc.org",
   ].filter(Boolean) as string[];
 }
 const FAST = () => !!process.env.SOLANA_RPC;
