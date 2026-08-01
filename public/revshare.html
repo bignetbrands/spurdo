@@ -1151,8 +1151,11 @@
           if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
           if (e.t > a.last) a.last = e.t;
         } else if (e.type === 'sweep') {
-          // tag da cohort: swept in M → paid 1st of M+2
-          const ym = ymAdd(ymOfSec(e.t), 2);
+          // cohort = first calendar month da money iz locked for from da start,
+          // paid da 1st after dat month. swept on da 1st → dat month counts.
+          const ym = new Date(e.t * 1000).getUTCDate() === 1
+            ? ymAdd(ymOfSec(e.t), 1)
+            : ymAdd(ymOfSec(e.t), 2);
           for (const a of agg.values()) {
             if (a.pending > 0n) {
               a.cohorts[ym] = (a.cohorts[ym] || 0n) + a.pending;
