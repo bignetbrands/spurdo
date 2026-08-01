@@ -420,9 +420,28 @@ export function ymAdd(ym: string, n: number): string {
   const d = new Date(Date.UTC(y, m - 1 + n, 1));
   return d.toISOString().slice(0, 7);
 }
-/** Da payout month a sweep at time t qualifies for: swept in M → paid 1st of M+2. */
+/**
+ * Da payout month a sweep at time t qualifies for.
+ *
+ * Rule: money earns da first calendar month itz locked for FROM DA START,
+ * n gets paid on da 1st after dat month ends. A sweep on da 1st catches da
+ * whole month; a sweep mid-month misses it n waits 4 da next one.
+ *
+ * Matches evry payout on chain:
+ *   may 11 sweep → first whole month june → paid jul 1  ✓ (round 1 basis wuz
+ *                  exactly da may-11 sweep amount — 7yDM's 18,048,520 iz da
+ *                  sum of its deposits thru may 10 to da lamport)
+ *   jun 21 sweep → first whole month july → paid aug 1  ✓ (67oa n 4JLS got
+ *                  nothing on jul 1 despite may deposits — dey swept jun 21)
+ *   jul 9 / jul 31 sweeps → first whole month august → paid sep 1
+ *   aug 1 sweep  → locked from da 1st, so august counts → paid sep 1
+ */
 function eligibleYm(tSec: number): string {
-  return ymAdd(ymOf(tSec), 2);
+  const d = new Date(tSec * 1000);
+  const sweepYm = ymOf(tSec);
+  // swept on da 1st (utc) → dat month iz fully locked → paid da 1st after it.
+  // otherwise da next full month iz da earner → paid da month after dat.
+  return d.getUTCDate() === 1 ? ymAdd(sweepYm, 1) : ymAdd(sweepYm, 2);
 }
 export type RevshareData = {
   savedAt: number;
