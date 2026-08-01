@@ -149,18 +149,6 @@ export async function refundImageSlot(): Promise<void> {
   }
 }
 
-/**
- * Record an image generation. Call AFTER a successful gen.
- * (Legacy post-paid path — the fal/openai flows now use reserveImageSlot.)
- */
-export async function recordImageSpend(count: number = 1): Promise<void> {
-  const key = imagesKey();
-  const newCount = await r().incrby(key, count);
-  if (newCount === count) {
-    // First write today — set the TTL
-    await r().expire(key, TTL_SECONDS);
-  }
-}
 
 /**
  * Record token usage. Call AFTER a successful Claude call.

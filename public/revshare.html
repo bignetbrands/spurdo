@@ -532,7 +532,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v11';
+  const CACHE_KEY = 'spurdo_revshare_v12';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1269,16 +1269,16 @@
     }
     const head = $('cHead');
     if (head) head.innerHTML =
-      '<th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th>' +
+      '<th>#</th><th>wallet</th><th>locked</th><th>share of ' + ymLabel(nowYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
       months.map(ym => {
         const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing' : ' \u00b7 next';
         return '<th>' + ymLabel(ym) + tag + '</th>';
       }).join('');
     const monthCell = (r, ym) => {
-      if (paidTotals[ym] > 0n) {
-        const got = (r.paidByMonth || {})[ym] || 0n;
-        return got > 0n ? fmtSol(got) : '\u2013';
-      }
+      const got = (r.paidByMonth || {})[ym] || 0n;
+      if (got > 0n) return fmtSol(got); // actually landed on chain
+      // a PAST month wit payouts iz settled — nothing more iz coming
+      if (paidTotals[ym] > 0n && ym < nowYm) return '\u2013';
       const elig = eligibleAmt(r, ym);
       if (elig <= 0n || poolElig[ym] <= 0n) return '\u2013';
       // show da amount da payout iz computed on. widout dis a wallet dat
@@ -1286,8 +1286,10 @@
       // "last" column only shows its NEWEST deposit, not da older locked
       // money dats actually qualifying.
       const base = '<span class="base">on ' + fmtAmt(toUi(elig)) + '</span>';
-      if (ym === nowYm && REV_SOL > 0n)
-        return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base;
+      if (ym === nowYm && REV_SOL > 0n) {
+        const tag = paidTotals[ym] > 0n ? ' <span class="base">payout in progress</span>' : '';
+        return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base + tag;
+      }
       // future cycle: pot unknown — show da wallet's share of dat pool
       return (Number((elig * 10000n) / poolElig[ym]) / 100).toFixed(2) + '%' + base;
     };
@@ -1299,7 +1301,9 @@
         '<td>' + (i + 1) + '</td>' +
         '<td><a href="https://solscan.io/account/' + esc(r.wallet) + '" target="_blank" rel="noopener" title="' + esc(r.wallet) + '">' + esc(shortW(r.wallet)) + '</a></td>' +
         '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
-        '<td>' + r.pct.toFixed(2) + '%</td>' +
+        '<td>' + (poolElig[nowYm] > 0n
+          ? (Number((eligibleAmt(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%'
+          : '\u2013') + '</td>' +
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
