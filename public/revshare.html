@@ -423,7 +423,7 @@
       <div class="ctable-wrap">
         <table class="ctable">
           <thead>
-            <tr><th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>revshare paid</th><th>next payout est</th></tr>
+            <tr id="cHead"><th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>jul</th><th>aug</th><th>sep</th></tr>
           </thead>
           <tbody id="cRows"></tbody>
         </table>
@@ -501,7 +501,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v9';
+  const CACHE_KEY = 'spurdo_revshare_v10';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -609,6 +609,20 @@
     return BigInt(s);
   }
 
+  function ymOfSec(tSec) { return new Date(tSec * 1000).toISOString().slice(0, 7); }
+  function ymAdd(ym, n) {
+    const [y, m] = ym.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+  }
+  function ymLabel(ym) {
+    return new Date(ym + '-01T00:00:00Z').toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }).toLowerCase();
+  }
+  // locked eligible for payout month ym = sum of cohorts wit eligibleFrom <= ym
+  function eligibleAmt(row, ym) {
+    let sum = 0n;
+    for (const k of Object.keys(row.cohorts || {})) if (k <= ym) sum += row.cohorts[k];
+    return sum;
+  }
   function fmtSol(lamports) {
     const v = Number(lamports) / 1e9;
     return (v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(4)) + ' SOL';
@@ -1105,9 +1119,14 @@
 
       // payouts = SOL out of da revshare wallet; exchange deposits map back via proxies
       const paid = new Map();
+      const paidByMonth = new Map();
       for (const o of rev.solOuts) {
         const w = PAYOUT_PROXIES[o.dest] || o.dest;
         paid.set(w, (paid.get(w) || 0n) + o.lamports);
+        const ym = ymOfSec(o.time || 0);
+        const rec = paidByMonth.get(w) || {};
+        rec[ym] = (rec[ym] || 0n) + o.lamports;
+        paidByMonth.set(w, rec);
       }
 
       // event timeline: deposits go pending → sweep 2 dev locks dem → returns drain pending (refund) den locked (unlock)
@@ -1124,7 +1143,7 @@
       events.sort((a, b) => (a.t - b.t) || (a.ord - b.ord));
 
       const agg = new Map();
-      const get = (w) => { let a = agg.get(w); if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0 }; agg.set(w, a); } return a; };
+      const get = (w) => { let a = agg.get(w); if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0, cohorts: {} }; agg.set(w, a); } return a; };
       for (const e of events) {
         if (e.type === 'dep') {
           const a = get(e.w);
@@ -1132,14 +1151,32 @@
           if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
           if (e.t > a.last) a.last = e.t;
         } else if (e.type === 'sweep') {
-          for (const a of agg.values()) { a.locked += a.pending; a.pending = 0n; }
+          // tag da cohort: swept in M → paid 1st of M+2
+          const ym = ymAdd(ymOfSec(e.t), 2);
+          for (const a of agg.values()) {
+            if (a.pending > 0n) {
+              a.cohorts[ym] = (a.cohorts[ym] || 0n) + a.pending;
+              a.locked += a.pending;
+              a.pending = 0n;
+            }
+          }
         } else if (e.type === 'ret') {
           const a = get(e.w);
           a.returned += e.amt;
           let r = e.amt;
           const fromPending = r < a.pending ? r : a.pending;
           a.pending -= fromPending; r -= fromPending;
-          a.locked = a.locked > r ? a.locked - r : 0n;
+          if (r > 0n) {
+            for (const ym of Object.keys(a.cohorts).sort().reverse()) {
+              if (r <= 0n) break;
+              const take = a.cohorts[ym] < r ? a.cohorts[ym] : r;
+              a.cohorts[ym] -= take;
+              if (a.cohorts[ym] === 0n) delete a.cohorts[ym];
+              r -= take;
+            }
+          }
+          const drained = e.amt - fromPending;
+          a.locked = a.locked > drained ? a.locked - drained : 0n;
         }
       }
 
@@ -1153,6 +1190,7 @@
           deposited: a.deposited, returned: a.returned,
           n: a.n, first: a.first, last: a.last,
           paid: paid.get(w) || 0n,
+          cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
           pct: pool > 0n ? Number(a.locked * 10000n / pool) / 100 : 0,
         }))
         .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1)));
@@ -1180,11 +1218,42 @@
     $('cPotLine').textContent = REV_SOL > 0n
       ? 'next payout pot: ' + fmtSol(REV_SOL) + ' sitting in da revshare wallet rite now'
       : '';
+    // ── month columns: [last, current, next] payout cycles ──
+    // a wallet swept in month M earns thru M+1 n gets paid on da 1st of M+2,
+    // so new locks join da NEXT cycle instead of diluting da current one.
+    const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
+    const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
+    // a month iz "paid" once any payout landed in it
+    const paidTotals = {};
+    for (const r of rows) for (const k of Object.keys(r.paidByMonth || {}))
+      paidTotals[k] = (paidTotals[k] || 0n) + r.paidByMonth[k];
+    const poolElig = {};
+    for (const ym of months) {
+      let sum = 0n;
+      for (const r of rows) sum += eligibleAmt(r, ym);
+      poolElig[ym] = sum;
+    }
+    const head = $('cHead');
+    if (head) head.innerHTML =
+      '<th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th>' +
+      months.map(ym => {
+        const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing' : ' \u00b7 next';
+        return '<th>' + ymLabel(ym) + tag + '</th>';
+      }).join('');
+    const monthCell = (r, ym) => {
+      if (paidTotals[ym] > 0n) {
+        const got = (r.paidByMonth || {})[ym] || 0n;
+        return got > 0n ? fmtSol(got) : '\u2013';
+      }
+      const elig = eligibleAmt(r, ym);
+      if (elig <= 0n || poolElig[ym] <= 0n) return '\u2013';
+      if (ym === nowYm && REV_SOL > 0n) return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]);
+      // future cycle: pot unknown — show da wallet's share of dat pool
+      return (Number((elig * 10000n) / poolElig[ym]) / 100).toFixed(2) + '%';
+    };
     const tb = $('cRows');
     tb.innerHTML = '';
     rows.forEach((r, i) => {
-      // projected next payout = pot split by locked share (same rule as round 1)
-      const proj = (pool > 0n && r.locked > 0n && REV_SOL > 0n) ? (REV_SOL * r.locked) / pool : 0n;
       const tr = document.createElement('tr');
       tr.innerHTML =
         '<td>' + (i + 1) + '</td>' +
@@ -1194,21 +1263,26 @@
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
-        '<td>' + (r.paid > 0n ? fmtSol(r.paid) : '\u2013') + '</td>' +
-        '<td>' + (proj > 0n ? '~' + fmtSol(proj) : '\u2013') + '</td>';
+        months.map(ym => '<td>' + monthCell(r, ym) + '</td>').join('');
       tb.appendChild(tr);
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
   }
 
   function downloadCsv() {
-    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,revshare_paid_sol,next_payout_est_sol\n';
+    const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
+    const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
+    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'
+      + months.map(ym => 'paid_' + ym + '_sol,eligible_' + ym).join(',') + '\n';
     const lines = CONTRIB_ROWS.map(r => [
       r.wallet, toUi(r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
       r.last ? new Date(r.last * 1000).toISOString() : '',
       Number(r.paid) / 1e9, // sol
-      (CONTRIB_POOL > 0n && r.locked > 0n && REV_SOL > 0n) ? Number((REV_SOL * r.locked) / CONTRIB_POOL) / 1e9 : 0, // projected sol
+      ...months.flatMap(ym => [
+        Number((r.paidByMonth || {})[ym] || 0n) / 1e9,
+        toUi(eligibleAmt(r, ym)),
+      ]),
     ].join(','));
     const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
