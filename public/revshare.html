@@ -532,7 +532,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v12';
+  const CACHE_KEY = 'spurdo_revshare_v13';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1274,6 +1274,18 @@
         const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing' : ' \u00b7 next';
         return '<th>' + ymLabel(ym) + tag + '</th>';
       }).join('');
+    // cutoff for payout month E = swept on/b4 da 1st of E-1 (a day-1 sweep
+    // still catches dat month). shown on evry cell so "why iz dis wallet
+    // earning" iz answerable from da table alone.
+    const cutoffLabel = (ym) => {
+      const prev = ymAdd(ym, -1);
+      return ymLabel(prev) + ' 1';
+    };
+    const cohortTitle = (r) => {
+      const parts = Object.entries(r.cohorts || {}).sort()
+        .map(([ym, amt]) => fmtAmt(toUi(amt)) + ' in da lock by ' + cutoffLabel(ym) + ' \u2192 earns from ' + ymLabel(ym));
+      return parts.length ? esc(parts.join('  \u00b7  ')) : '';
+    };
     const monthCell = (r, ym) => {
       const got = (r.paidByMonth || {})[ym] || 0n;
       if (got > 0n) return fmtSol(got); // actually landed on chain
@@ -1281,11 +1293,11 @@
       if (paidTotals[ym] > 0n && ym < nowYm) return '\u2013';
       const elig = eligibleAmt(r, ym);
       if (elig <= 0n || poolElig[ym] <= 0n) return '\u2013';
-      // show da amount da payout iz computed on. widout dis a wallet dat
-      // locked more recently looks like it shouldnt be earning at all — da
-      // "last" column only shows its NEWEST deposit, not da older locked
-      // money dats actually qualifying.
-      const base = '<span class="base">on ' + fmtAmt(toUi(elig)) + '</span>';
+      // show da amount da payout iz computed on AND da lock cutoff it met.
+      // widout dis a wallet dat locked more recently looks like it shouldnt
+      // be earning at all — da "last" column only shows its NEWEST deposit,
+      // not da older locked money dats actually qualifying.
+      const base = '<span class="base">on ' + fmtAmt(toUi(elig)) + ' \u00b7 in by ' + cutoffLabel(ym) + '</span>';
       if (ym === nowYm && REV_SOL > 0n) {
         const tag = paidTotals[ym] > 0n ? ' <span class="base">payout in progress</span>' : '';
         return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base + tag;
@@ -1307,7 +1319,7 @@
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
-        months.map(ym => '<td class="mcell">' + monthCell(r, ym) + '</td>').join('');
+        months.map(ym => '<td class="mcell" title="' + cohortTitle(r) + '">' + monthCell(r, ym) + '</td>').join('');
       tb.appendChild(tr);
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
