@@ -4,7 +4,7 @@
 
 import { Redis } from "@upstash/redis";
 
-export const REVSHARE_CACHE_KEY = "revshare:data:v6";
+export const REVSHARE_CACHE_KEY = "revshare:data:v7";
 export const REVSHARE_LOCK_KEY = "revshare:scan-lock";
 export const REVSHARE_MAX_AGE_MS = 5 * 24 * 3600 * 1000;
 

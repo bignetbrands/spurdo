@@ -443,7 +443,8 @@
     <div class="state-box hidden" id="contribEmpty">nobody gave benis yet :D</div>
 
     <div class="hidden" id="contribBody">
-      <div class="as-of" id="cPotLine" style="margin-bottom:8px;"></div>
+      <div class="as-of" id="cPotLine" style="margin-bottom:2px;"></div>
+      <div class="as-of" id="cReconLine" style="margin-bottom:8px;font-family:var(--font-mono);font-size:0.72rem;"></div>
       <div class="ctable-wrap">
         <table class="ctable">
           <thead>
@@ -532,7 +533,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v13';
+  const CACHE_KEY = 'spurdo_revshare_v14';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1164,6 +1165,7 @@
       const events = [];
       for (const d of tre.ins) {
         if (d.owner === '?' || internal.has(d.owner)) continue;
+        if (d.srcAddr && d.owner === d.srcAddr) continue; // streamflow escrow, not a holder
         events.push({ t: d.time || 0, ord: 0, type: 'dep', w: d.owner, amt: d.amount });
       }
       let sent2dev = 0n;
@@ -1252,6 +1254,27 @@
     $('cPotLine').textContent = REV_SOL > 0n
       ? 'next payout pot: ' + fmtSol(REV_SOL) + ' sitting in da revshare wallet rite now'
       : '';
+    // reconcile check: da holder ledger must never claim more dan da vault holds.
+    // surplus = dev's own locked benis (custodian top-ups + internal deposits).
+    (() => {
+      const el = $('cReconLine');
+      if (!el) return;
+      const locks = (typeof CURRENT_LOCKS !== 'undefined' && CURRENT_LOCKS) || [];
+      if (!locks.length) { el.textContent = ''; return; }
+      let vault = 0n;
+      for (const l of locks) { if (!(l.canceledAt > 0)) vault += l.deposited - l.withdrawn; }
+      const diff = vault - pool;
+      if (diff >= 0n) {
+        el.textContent = 'vault check: ' + fmtAmt(toUi(vault)) + ' in streamflow \u2265 '
+          + fmtAmt(toUi(pool)) + ' holder ledger \u2713 (dev\u2019s own: ' + fmtAmt(toUi(diff)) + ')';
+        el.style.color = '';
+      } else {
+        el.textContent = '\u26a0 vault check FAILED: holder ledger ' + fmtAmt(toUi(pool))
+          + ' exceeds streamflow vault ' + fmtAmt(toUi(vault)) + ' by ' + fmtAmt(toUi(-diff))
+          + ' \u2014 accounting drift, tell da dev';
+        el.style.color = '#c0392b';
+      }
+    })();
     // ── month columns: [last, current, next] payout cycles ──
     // a wallet swept in month M earns thru M+1 n gets paid on da 1st of M+2,
     // so new locks join da NEXT cycle instead of diluting da current one.

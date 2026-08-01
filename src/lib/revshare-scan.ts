@@ -568,6 +568,11 @@ export async function runFullScan(): Promise<RevshareData> {
   const events: Ev[] = [];
   for (const d of tre.ins) {
     if (d.owner === "?" || internal.has(d.owner)) continue;
+    // self-owned source acct = streamflow escrow (authority == own address).
+    // dats lock proceeds flowing back in2 da treasury — dev-side money, not
+    // a holder deposit. burned us: da jun-29 lock's escrow showed up as a
+    // "contributor" wit 833k when dev claimed vested tokens.
+    if (d.srcAddr && d.owner === d.srcAddr) continue;
     events.push({ t: d.time || 0, ord: 0, type: "dep", w: d.owner, amt: d.amount });
   }
   let sent2dev = 0n;
