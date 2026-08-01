@@ -399,10 +399,31 @@ async function fetchLocksApi(): Promise<Lock[]> {
 
 /* ---------- full scan ---------- */
 // paid = SOL lamports received from da revshare wallet (payouts r sol, not $spurdo)
+// cohorts = locked amounts keyed by da month (YYYY-MM) dey become payout-eligible:
+//   swept in month M → earns thru M+1 → paid on da 1st of M+2 (matches round 1
+//   on-chain: may-swept wallets got da jul 1 payout, jun-swept did not).
+// paidByMonth = actual sol payouts keyed by da month (YYYY-MM) of da transfer.
 export type ContribRow = {
   wallet: string; locked: bigint; pending: bigint; deposited: bigint; returned: bigint;
   n: number; first: number; last: number; paid: bigint; pct: number;
+  cohorts: Record<string, bigint>;
+  paidByMonth: Record<string, bigint>;
 };
+
+/** YYYY-MM of a unix-seconds timestamp (utc). */
+function ymOf(tSec: number): string {
+  return new Date(tSec * 1000).toISOString().slice(0, 7);
+}
+/** YYYY-MM shifted by n months. */
+export function ymAdd(ym: string, n: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return d.toISOString().slice(0, 7);
+}
+/** Da payout month a sweep at time t qualifies for: swept in M → paid 1st of M+2. */
+function eligibleYm(tSec: number): string {
+  return ymAdd(ymOf(tSec), 2);
+}
 export type RevshareData = {
   savedAt: number;
   rpcConfigured: boolean;
@@ -512,9 +533,14 @@ export async function runFullScan(): Promise<RevshareData> {
   // payouts per wallet — SOL lamports out of da revshare wallet.
   // exchange-deposit dests (changenow etc) map back 2 da locker via PAYOUT_PROXIES.
   const paid = new Map<string, bigint>();
+  const paidByMonth = new Map<string, Record<string, bigint>>();
   for (const o of rev.solOuts) {
     const w = PAYOUT_PROXIES[o.dest] || o.dest;
     paid.set(w, (paid.get(w) || 0n) + o.lamports);
+    const ym = ymOf(o.time || 0);
+    const rec = paidByMonth.get(w) || {};
+    rec[ym] = (rec[ym] || 0n) + o.lamports;
+    paidByMonth.set(w, rec);
   }
 
   // event timeline: deposit→pending, sweep→locked, returns drain pending den locked
@@ -532,11 +558,15 @@ export async function runFullScan(): Promise<RevshareData> {
   }
   events.sort((a, b) => a.t - b.t || a.ord - b.ord);
 
-  type Agg = { locked: bigint; pending: bigint; deposited: bigint; returned: bigint; n: number; first: number; last: number };
+  type Agg = {
+    locked: bigint; pending: bigint; deposited: bigint; returned: bigint;
+    n: number; first: number; last: number;
+    cohorts: Record<string, bigint>; // eligible-from month → locked amount
+  };
   const agg = new Map<string, Agg>();
   const get = (w: string): Agg => {
     let a = agg.get(w);
-    if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0 }; agg.set(w, a); }
+    if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0, cohorts: {} }; agg.set(w, a); }
     return a;
   };
   for (const e of events) {
@@ -546,14 +576,35 @@ export async function runFullScan(): Promise<RevshareData> {
       if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
       if (e.t > a.last) a.last = e.t;
     } else if (e.type === "sweep") {
-      for (const a of agg.values()) { a.locked += a.pending; a.pending = 0n; }
+      // pending → locked, tagged wit da payout month dis sweep qualifies for.
+      // a wallet locked in july earns thru august n gets paid sep 1 — lumping
+      // cohorts together diluted existing lockers da moment new money locked.
+      const ym = eligibleYm(e.t);
+      for (const a of agg.values()) {
+        if (a.pending > 0n) {
+          a.cohorts[ym] = (a.cohorts[ym] || 0n) + a.pending;
+          a.locked += a.pending;
+          a.pending = 0n;
+        }
+      }
     } else {
       const a = get(e.w!);
       a.returned += e.amt!;
       let r = e.amt!;
       const fromPending = r < a.pending ? r : a.pending;
       a.pending -= fromPending; r -= fromPending;
-      a.locked = a.locked > r ? a.locked - r : 0n;
+      // drain locked newest-cohort-first (returns r usually recent money)
+      if (r > 0n) {
+        for (const ym of Object.keys(a.cohorts).sort().reverse()) {
+          if (r <= 0n) break;
+          const take = a.cohorts[ym] < r ? a.cohorts[ym] : r;
+          a.cohorts[ym] -= take;
+          if (a.cohorts[ym] === 0n) delete a.cohorts[ym];
+          r -= take;
+        }
+      }
+      const drained = e.amt! - fromPending;
+      a.locked = a.locked > drained ? a.locked - drained : 0n;
     }
   }
   let pool = 0n, pendingTotal = 0n;
@@ -566,6 +617,7 @@ export async function runFullScan(): Promise<RevshareData> {
     .map(([w, a]) => ({
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
+      cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
       pct: pool > 0n ? Number((a.locked * 10000n) / pool) / 100 : 0,
     }))
     .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : y.pending > x.pending ? 1 : -1));
