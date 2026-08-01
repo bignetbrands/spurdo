@@ -26,15 +26,49 @@ page shows: locks (deposited/unlocked/next-unlock), locked-wallet table (locked 
 
 ## immediate open items
 
-1. **vercel env**: `SOLANA_RPC = https://mainnet.helius-rpc.com/?api-key=KEY` (free tier fine). widout it server uses api.mainnet-beta — full history but rate-limited, scans slower n can drop txs.
-2. after deploy: hit `/api/revshare-data?force=1` once (30–60s), den verify `/revshare` diag line starts `server ·` and old lockers appear. ism can cross-check vs solscan transfers on da treasury.
-3. if wallets still missing: diag line format iz `treasury: N acct · ok/sigs txs ·· found N old acct ·· node:sigs…` — a node showing `err` or low sigs = history gap; a missing wallet + clean diag = accounting rule question, check `runFullScan` event timeline.
+~~all resolved (aug 2026)~~ — SOLANA_RPC iz set, da cache round-trip bug iz
+fixed (upstash automaticDeserialization), scans complete in ~45-60s, all
+contributors show, payouts read from chain. see prs #3-#23 4 da full trail.
+
+## payout policy — LOCKED IN (aug 2026, confirmed by ism)
+
+deez r product decisions, not bugs. dont "fix" dem:
+
+1. **dev earns NOTHING from rev share.** da dev wallet iz a custodian only:
+   treasury pools holder deposits → dev signs da streamflow locks. its own
+   locks r da time-based ones (shown as "dev lock" on da page); its own
+   treasury deposits r internal n excluded from evry pool. round 1 (jul 1)
+   paid dev 2.707 sol on-chain as a one-off — dat wuz da last time. da
+   page's holder-only split IZ da payout sheet.
+
+2. **cohort rule** (reverse-engineered from round 1, verified 2 da lamport):
+   money earns da first calendar month itz locked for FROM DA START, paid on
+   da 1st after dat month ends. swept mid-month → misses dat month; swept ON
+   da 1st → catches it. may-11 sweep → paid jul 1 ✓ (round 1 basis wuz
+   exactly 157,702,436 = dat sweep; 7yDM's 18,048,520 = its deposits thru
+   may 10). jun-21 swept wallets got nothing jul 1 ✓. aug-1 sweep → paid
+   sep 1.
+
+3. **per-cycle share%.** share of payout month E = holder's eligible cohorts
+   (swept on/b4 da 1st of E-1) ÷ dat cycle's eligible pool. share of TOTAL
+   locked iz meaningless da moment two cohorts exist — it diluted august
+   projections when da jul/aug locks landed (pr #18/#22).
+
+4. **payouts r SOL** (kreator fees), read from da rev wallet's outflows,
+   grouped by month. exchange-routed payouts (changenow) map back via
+   PAYOUT_PROXIES in revshare-scan.ts — one line per proxy, documented wit
+   da payout sheet dat proves da recipient.
+
+5. **locks r pooled containers.** no holder owns a lock on-chain; da
+   contributor table IZ da ownership ledger, reconstructed from treasury
+   deposit history. dats why refunds flow back thru treasury (da returned
+   column) n why dis accounting exists at all.
 
 ## maybe next
 
-- cron route to refresh da redis cache nightly (crons already exist in `vercel.json`, copy da pattern)
+- ~~cron route to refresh da redis cache nightly~~ done (pr #16, 04:20 utc)
 - reconcile check: sum(locked by holders) vs streamflow deposited minus returns — surface mismatch on da page
-- payout helper: csv → batch transfer list for da monthly revshare run
+- ~~payout helper~~ done-ish: da csv now carries per-month paid_YYYY-MM_sol n eligible_YYYY-MM columns — da "share of <month>" column × pot iz da transfer list
 
 ## invariants — dont break
 
