@@ -286,6 +286,14 @@
 
     /* === CONTRIBUTOR TABLE === */
     .ctable-wrap { overflow-x: auto; }
+    /* da card tilt (-2deg) shifts da right edge ~a full row across a 10-column
+       table, so reading straight across lands u on da wrong row. keep da tilt
+       on evryding else, kill it here, n stripe/highlight rows 2 track by eye. */
+    #totalsCard { transform: rotate(-0.35deg); }
+    .ctable tbody tr:nth-child(even) { background: rgba(0,0,0,0.035); }
+    .ctable tbody tr:hover { background: var(--yellow); }
+    .ctable td.mcell { line-height: 1.15; }
+    .ctable td.mcell .base { display: block; font-size: 0.68rem; opacity: 0.62; }
     .ctable {
       width: 100%;
       border-collapse: collapse;
@@ -429,6 +437,13 @@
         </table>
       </div>
 
+      <p class="hint" style="margin:10px 0 4px;font-size:0.85rem;line-height:1.45;">
+        each month column iz a separate payout. ur benis starts earning da first
+        full calendar month itz locked for — so a lock dat lands mid-month sits
+        out dat month n starts da next one. da small number under each amount iz
+        how much of ur stack qualifies for dat month; a wallet can have part of
+        its benis earning now n part waiting for da next cycle.
+      </p>
       <button class="refresh-btn" type="button" onclick="downloadCsv()">download csv :D</button>
       <div class="as-of" id="cSrcLine" style="margin-top:10px;font-family:var(--font-mono);font-size:0.72rem;"></div>
     </div>
@@ -501,7 +516,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v10';
+  const CACHE_KEY = 'spurdo_revshare_v11';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1250,9 +1265,15 @@
       }
       const elig = eligibleAmt(r, ym);
       if (elig <= 0n || poolElig[ym] <= 0n) return '\u2013';
-      if (ym === nowYm && REV_SOL > 0n) return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]);
+      // show da amount da payout iz computed on. widout dis a wallet dat
+      // locked more recently looks like it shouldnt be earning at all — da
+      // "last" column only shows its NEWEST deposit, not da older locked
+      // money dats actually qualifying.
+      const base = '<span class="base">on ' + fmtAmt(toUi(elig)) + '</span>';
+      if (ym === nowYm && REV_SOL > 0n)
+        return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base;
       // future cycle: pot unknown — show da wallet's share of dat pool
-      return (Number((elig * 10000n) / poolElig[ym]) / 100).toFixed(2) + '%';
+      return (Number((elig * 10000n) / poolElig[ym]) / 100).toFixed(2) + '%' + base;
     };
     const tb = $('cRows');
     tb.innerHTML = '';
@@ -1266,7 +1287,7 @@
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
-        months.map(ym => '<td>' + monthCell(r, ym) + '</td>').join('');
+        months.map(ym => '<td class="mcell">' + monthCell(r, ym) + '</td>').join('');
       tb.appendChild(tr);
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
