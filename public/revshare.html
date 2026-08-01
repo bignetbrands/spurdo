@@ -289,7 +289,22 @@
     /* da card tilt (-2deg) shifts da right edge ~a full row across a 10-column
        table, so reading straight across lands u on da wrong row. keep da tilt
        on evryding else, kill it here, n stripe/highlight rows 2 track by eye. */
-    #totalsCard { transform: rotate(-0.35deg); }
+    /* full-bleed: da 10-column table needs more dan da 860px container, so dis
+       one card breaks out n centers on da viewport instead. narrative text
+       elsewhere keeps da narrow readable measure. min() so it never exceeds
+       da screen — on mobile it jus stays inside da container n scrolls. */
+    #totalsCard {
+      width: min(1560px, 96vw);
+      max-width: none;
+      margin-left: 50%;
+      transform: translateX(-50%) rotate(-0.35deg);
+    }
+    /* keep da prose inside da wide card at a readable measure */
+    #totalsCard > h2,
+    #totalsCard > p,
+    #totalsCard .as-of,
+    #totalsCard .hint { max-width: 820px; margin-left: auto; margin-right: auto; }
+    #totalsCard .big-num, #totalsCard .big-lbl { text-align: center; }
     .ctable tbody tr:nth-child(even) { background: rgba(0,0,0,0.035); }
     .ctable tbody tr:hover { background: var(--yellow); }
     .ctable td.mcell { line-height: 1.15; }
@@ -301,6 +316,7 @@
       font-size: 0.82rem;
       transform: rotate(-0.3deg);
     }
+    .ctable th, .ctable td { white-space: nowrap; }
     .ctable th, .ctable td {
       border: 2px solid var(--ink);
       padding: 7px 9px;
