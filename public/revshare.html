@@ -722,6 +722,12 @@
     for (const k of Object.keys(DEV_EXTRA_STAKES)) if (k <= ym) sum += DEV_EXTRA_STAKES[k];
     return sum;
   }
+  // wat da table shows as dev's holding: itz own genuine stakes ONLY
+  // (r1 + jul-31 = 10,826,277.58) — da custodial benis it also holds
+  // belongs 2 da holders n stays out of dev's row total (per ism)
+  function devStakesTotal(row) {
+    return eligibleAmt(row, DEV_R1_YM) + Object.values(DEV_EXTRA_STAKES).reduce((a, b) => a + b, 0n);
+  }
   function fmtSol(lamports) {
     const v = Number(lamports) / 1e9;
     return (v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(4)) + ' SOL';
@@ -1442,9 +1448,10 @@
       if (r.role === 'dev') tr.className = 'devrow';
       tr.innerHTML =
         '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
-        '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) +
-          (r.role === 'dev' ? ' <span class="devtag" title="earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 da rest iz held 4 da holders">dev \u00b7 custodian</span>' : '') + '</span></td>' +
-        '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
+        '<td>' + (r.role === 'dev'
+          ? '<span>' + esc(shortW(r.wallet)) + ' <span class="devtag" title="earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 custodial benis it holds 4 da holders iz not counted here">dev \u00b7 custodian</span></span>'
+          : '<span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>') + '</td>' +
+        '<td>' + fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked)) + '</td>' +
         '<td>' + (poolElig[nowYm] <= 0n || eligOf(r, nowYm) <= 0n
           ? '\u2013'
           : (Number((eligOf(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
@@ -1517,7 +1524,7 @@
     const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'
       + months.map(ym => 'paid_' + ym + '_sol,eligible_' + ym).join(',') + '\n';
     const lines = CONTRIB_ROWS.map(r => [
-      r.wallet, toUi(r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
+      r.wallet, toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
       r.last ? new Date(r.last * 1000).toISOString() : '',
       Number(r.paid) / 1e9, // sol

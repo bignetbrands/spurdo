@@ -47,7 +47,10 @@ deez r product decisions, not bugs. dont "fix" dem:
    evryting ELSE dev deposited after round 1 iz custodial — pooled holder
    tokens passing thru 4 locking — n NEVER earns. dev also signs da
    time-based "dev lock"s. its row renders pinned last wit da "dev ·
-   custodian" tag. NOTE: da scan cannot see dev unlocks either (escrow →
+   custodian" tag, its holding column shows ONLY da own-stakes total
+   (7,365,272 + 3,461,005.205545 = 10,826,277.58 — NOT da custodial benis
+   it also holds), n it haz NO receipts popup (per ism) — da evidence
+   lives in da month-cell tooltips n da devtag tooltip. NOTE: da scan cannot see dev unlocks either (escrow →
    dev never touches treasury), so both stakes r fixed by DATE/amount, not
    live balance — if a dev stake ever leaves streamflow, or dev adds a NEW
    genuine stake, edit `DEV_EXTRA_STAKES`/`DEV_R1_YM` by hand.
