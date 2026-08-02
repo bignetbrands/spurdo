@@ -11,7 +11,7 @@ state as of commit `571cee4` (2026-07-13). read dis first, den `public/revshare.
 4. treasury → holder transfers = refund (b4 sweep) or unlock-return (after) — both reduce dat wallet's locked amount
 5. monthly revshare paid from `Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ`
 
-page shows: locks (deposited/unlocked/next-unlock), locked-wallet table (locked · share% · pending · returned · revshare paid), csv export. share% on locked only = payout split.
+page shows: locks (deposited/unlocked/next-unlock), locked-wallet table (locked · share% · pending · returned · revshare paid), csv export. per-cycle ELIGIBLE share = payout split (see items 1 n 3 below — not raw locked, n dev's basis iz frozen at r1).
 
 ## architecture
 
@@ -34,12 +34,18 @@ contributors show, payouts read from chain. see prs #3-#23 4 da full trail.
 
 deez r product decisions, not bugs. dont "fix" dem:
 
-1. **dev earns NOTHING from rev share.** da dev wallet iz a custodian only:
-   treasury pools holder deposits → dev signs da streamflow locks. its own
-   locks r da time-based ones (shown as "dev lock" on da page); its own
-   treasury deposits r internal n excluded from evry pool. round 1 (jul 1)
-   paid dev 2.707 sol on-chain as a one-off — dat wuz da last time. da
-   page's holder-only split IZ da payout sheet.
+1. **dev earns rev share ONLY on itz round-1 stake.** da dev wallet genuinely
+   put 7,365,272 in2 pool 1 (apr 29-30 deposits · may-11 sweep · 2026-07
+   cohort) n wuz paid 2.707 sol jul 1 for it — dat stake keeps earning evry
+   cycle while it stays locked, pro-rata like any holder (so it IZ in da
+   aug/sep pools). evryting dev deposited AFTER round 1 iz custodial —
+   pooled holder tokens passing thru 4 locking — n NEVER earns: da page
+   freezes dev's eligible basis at itz r1 cohorts (`eligOf` + `DEV_R1_YM` in
+   revshare.html). dev also signs da time-based "dev lock"s. its row renders
+   pinned last wit da "dev · custodian" tag. NOTE: da scan cannot see a dev
+   unlock (streamflow escrow → dev never touches treasury), so da r1 basis
+   iz frozen by DATE, not by live balance — if da r1 stake ever fully
+   unlocks n leaves streamflow, revisit eligOf/DEV_R1_YM by hand.
 
 2. **cohort rule** (reverse-engineered from round 1, verified 2 da lamport):
    money earns da first calendar month itz locked for FROM DA START, paid on
