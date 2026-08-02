@@ -286,6 +286,38 @@
 
     /* === CONTRIBUTOR TABLE === */
     .ctable-wrap { overflow-x: auto; }
+    /* holder evidence modal */
+    .hmodal-overlay {
+      position: fixed; inset: 0; z-index: 400;
+      background: rgba(26,26,26,0.55);
+      display: none; align-items: center; justify-content: center;
+      padding: 18px;
+    }
+    .hmodal-overlay.show { display: flex; }
+    .hmodal {
+      background: var(--paper); border: 4px solid var(--ink);
+      box-shadow: 8px 8px 0 var(--ink);
+      width: min(680px, 96vw); max-height: 86vh; overflow-y: auto;
+      padding: 20px 22px;
+      position: relative;
+    }
+    .hmodal h3 { font-size: 1.15rem; margin-bottom: 2px; }
+    .hmodal .haddr { font-family: var(--font-mono); font-size: 0.72rem; word-break: break-all; opacity: 0.75; margin-bottom: 10px; }
+    .hmodal .hsum { font-family: var(--font-mono); font-size: 0.8rem; margin-bottom: 12px; line-height: 1.5; }
+    .hmodal table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.76rem; }
+    .hmodal th, .hmodal td { border: 2px solid var(--ink); padding: 5px 8px; text-align: right; white-space: nowrap; }
+    .hmodal th { background: var(--yellow); }
+    .hmodal th:first-child, .hmodal td:first-child { text-align: left; }
+    .hmodal tr.k-return td { color: #a04000; }
+    .hmodal tr.k-payout td { color: #1e7145; }
+    .hmodal .hclose {
+      position: absolute; top: 8px; right: 10px;
+      background: var(--red-troll); color: var(--paper);
+      border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink);
+      width: 30px; height: 30px; font-weight: bold; cursor: pointer; font-family: var(--font-main);
+    }
+    .hmodal .hfoot { font-size: 0.75rem; margin-top: 10px; opacity: 0.8; }
+    .wallet-btn { cursor: pointer; text-decoration: underline dotted; }
     /* da card tilt (-2deg) shifts da right edge ~a full row across a 10-column
        table, so reading straight across lands u on da wrong row. keep da tilt
        on evryding else, kill it here, n stripe/highlight rows 2 track by eye. */
@@ -490,6 +522,23 @@
 
 </div>
 
+<!-- HOLDER EVIDENCE MODAL -->
+<div class="hmodal-overlay" id="hmodalOverlay" role="dialog" aria-modal="true">
+  <div class="hmodal">
+    <button class="hclose" id="hmodalClose" aria-label="close">×</button>
+    <h3 id="hmodalTitle">holder</h3>
+    <div class="haddr"><a id="hmodalAddr" href="#" target="_blank" rel="noopener"></a></div>
+    <div class="hsum" id="hmodalSum"></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>date</th><th>wat happened</th><th>amount</th><th>earns from</th><th>tx</th></tr></thead>
+        <tbody id="hmodalRows"></tbody>
+      </table>
+    </div>
+    <div class="hfoot">evry row iz a real on-chain tx — click em n check on solscan. deposits show da payout month dey earn from; returns r benis going back 2 da wallet; payouts r SOL from da revshare wallet :D</div>
+  </div>
+</div>
+
 <script>
   /* === KONFIGURASHUN ==========================================
      everything u might want to change lives here
@@ -533,7 +582,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v14';
+  const CACHE_KEY = 'spurdo_revshare_v15';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1161,6 +1210,31 @@
         paidByMonth.set(w, rec);
       }
 
+      // per-wallet tx ledger 4 da holder modal — same filters as da accounting
+      const sweepTimes = tre.outs.filter(o => o.destOwner === DEV_WALLET).map(o => o.time || 0).sort((a, b) => a - b);
+      const cohortOfDep = (t) => {
+        const sw = sweepTimes.find(x => x >= t);
+        return sw !== undefined
+          ? (new Date(sw * 1000).getUTCDate() === 1 ? ymAdd(ymOfSec(sw), 1) : ymAdd(ymOfSec(sw), 2))
+          : undefined;
+      };
+      const txsByWallet = new Map();
+      const pushTx = (w, tx) => { const l = txsByWallet.get(w) || []; l.push(tx); txsByWallet.set(w, l); };
+      for (const d of tre.ins) {
+        if (d.owner === '?' || internal.has(d.owner)) continue;
+        if (d.srcAddr && d.owner === d.srcAddr) continue;
+        pushTx(d.owner, { t: d.time || 0, kind: 'deposit', amount: d.amount, sig: d.sig, ym: cohortOfDep(d.time || 0) });
+      }
+      for (const o of tre.outs) {
+        if (!o.destOwner || o.destOwner === DEV_WALLET || internal.has(o.destOwner)) continue;
+        pushTx(o.destOwner, { t: o.time || 0, kind: 'return', amount: o.amount, sig: o.sig });
+      }
+      for (const o of rev.solOuts) {
+        const w = PAYOUT_PROXIES[o.dest] || o.dest;
+        pushTx(w, { t: o.time, kind: 'payout', amount: o.lamports, sig: o.sig });
+      }
+      for (const l of txsByWallet.values()) l.sort((a, b) => b.t - a.t);
+
       // event timeline: deposits go pending → sweep 2 dev locks dem → returns drain pending (refund) den locked (unlock)
       const events = [];
       for (const d of tre.ins) {
@@ -1227,6 +1301,7 @@
           n: a.n, first: a.first, last: a.last,
           paid: paid.get(w) || 0n,
           cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
+          txs: (txsByWallet.get(w) || []).slice(0, 60),
           pct: pool > 0n ? Number(a.locked * 10000n / pool) / 100 : 0,
         }))
         .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1)));
@@ -1334,7 +1409,7 @@
       const tr = document.createElement('tr');
       tr.innerHTML =
         '<td>' + (i + 1) + '</td>' +
-        '<td><a href="https://solscan.io/account/' + esc(r.wallet) + '" target="_blank" rel="noopener" title="' + esc(r.wallet) + '">' + esc(shortW(r.wallet)) + '</a></td>' +
+        '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span></td>' +
         '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
         '<td>' + (poolElig[nowYm] > 0n
           ? (Number((eligibleAmt(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%'
@@ -1347,6 +1422,55 @@
     });
     $('contribEmpty').classList.toggle('hidden', rows.length > 0);
   }
+
+  /* ---------- holder evidence modal ---------- */
+  function openHolderModal(wallet) {
+    const r = CONTRIB_ROWS.find((x) => x.wallet === wallet);
+    if (!r) return;
+    $('hmodalTitle').textContent = shortW(wallet) + ' — on-chain receipts';
+    const a = $('hmodalAddr');
+    a.textContent = wallet;
+    a.href = 'https://solscan.io/account/' + encodeURIComponent(wallet);
+    $('hmodalSum').textContent =
+      'deposited ' + fmtAmt(toUi(r.deposited)) +
+      ' · locked ' + fmtAmt(toUi(r.locked)) +
+      (r.pending > 0n ? ' · pending ' + fmtAmt(toUi(r.pending)) : '') +
+      (r.returned > 0n ? ' · returned ' + fmtAmt(toUi(r.returned)) : '') +
+      (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '');
+    const tb = $('hmodalRows');
+    tb.innerHTML = '';
+    const txs = r.txs || [];
+    if (!txs.length) {
+      tb.innerHTML = '<tr><td colspan="5">no tx detail in dis payload — refresh 4 a fresh scan :D</td></tr>';
+    }
+    for (const tx of txs) {
+      const tr = document.createElement('tr');
+      tr.className = 'k-' + tx.kind;
+      const kind = tx.kind === 'deposit' ? 'sent 2 treasury'
+        : tx.kind === 'return' ? 'returned 2 wallet'
+        : 'revshare payout';
+      const amt = tx.kind === 'payout' ? fmtSol(tx.amount) : fmtAmt(toUi(tx.amount));
+      const ym = tx.kind === 'deposit' ? (tx.ym ? ymLabel(tx.ym) : 'pending') : '\u2013';
+      tr.innerHTML =
+        '<td>' + fmtDate(tx.t) + '</td>' +
+        '<td>' + kind + '</td>' +
+        '<td>' + amt + '</td>' +
+        '<td>' + ym + '</td>' +
+        '<td><a href="https://solscan.io/tx/' + encodeURIComponent(tx.sig) + '" target="_blank" rel="noopener">' + esc(tx.sig.slice(0, 8)) + '\u2026 \u2197</a></td>';
+      tb.appendChild(tr);
+    }
+    $('hmodalOverlay').classList.add('show');
+  }
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.wallet-btn');
+    if (btn) { openHolderModal(btn.dataset.wallet); return; }
+    if (e.target === $('hmodalOverlay') || (e.target.closest && e.target.closest('#hmodalClose'))) {
+      $('hmodalOverlay').classList.remove('show');
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('hmodalOverlay').classList.remove('show');
+  });
 
   function downloadCsv() {
     const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
