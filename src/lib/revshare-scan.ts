@@ -408,6 +408,18 @@ export type ContribRow = {
   n: number; first: number; last: number; paid: bigint; pct: number;
   cohorts: Record<string, bigint>;
   paidByMonth: Record<string, bigint>;
+  /** per-wallet on-chain evidence — evry tx behind da balance, newest first.
+   *  amount iz $spurdo raw units for deposit/return, LAMPORTS for payout. */
+  txs: ContribTx[];
+};
+
+export type ContribTx = {
+  t: number;
+  kind: "deposit" | "return" | "payout";
+  amount: bigint;
+  sig: string;
+  /** deposits only: da payout month dis money earns from (via da sweep dat locked it) */
+  ym?: string;
 };
 
 /** YYYY-MM of a unix-seconds timestamp (utc). */
@@ -631,6 +643,37 @@ export async function runFullScan(): Promise<RevshareData> {
       a.locked = a.locked > drained ? a.locked - drained : 0n;
     }
   }
+  // per-wallet tx ledger — same filters as da accounting (internal + escrow
+  // excluded), so da modal always reconciles wit da row it supports.
+  const sweepTimes = tre.outs
+    .filter((o) => o.destOwner === DEV_WALLET)
+    .map((o) => o.time || 0)
+    .sort((a, b) => a - b);
+  const cohortOfDep = (t: number): string | undefined => {
+    const sw = sweepTimes.find((x) => x >= t);
+    return sw !== undefined ? eligibleYm(sw) : undefined; // undefined = still pending
+  };
+  const txsByWallet = new Map<string, ContribTx[]>();
+  const pushTx = (w: string, tx: ContribTx) => {
+    const l = txsByWallet.get(w) || [];
+    l.push(tx);
+    txsByWallet.set(w, l);
+  };
+  for (const d of tre.ins) {
+    if (d.owner === "?" || internal.has(d.owner)) continue;
+    if (d.srcAddr && d.owner === d.srcAddr) continue; // streamflow escrow
+    pushTx(d.owner, { t: d.time || 0, kind: "deposit", amount: d.amount, sig: d.sig, ym: cohortOfDep(d.time || 0) });
+  }
+  for (const o of tre.outs) {
+    if (!o.destOwner || o.destOwner === DEV_WALLET || internal.has(o.destOwner)) continue;
+    pushTx(o.destOwner, { t: o.time || 0, kind: "return", amount: o.amount, sig: o.sig });
+  }
+  for (const o of rev.solOuts) {
+    const w = PAYOUT_PROXIES[o.dest] || o.dest;
+    pushTx(w, { t: o.time, kind: "payout", amount: o.lamports, sig: o.sig });
+  }
+  for (const l of txsByWallet.values()) l.sort((a, b) => b.t - a.t);
+
   let pool = 0n, pendingTotal = 0n;
   for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
   const contribRows: ContribRow[] = [...agg.entries()]
@@ -642,6 +685,7 @@ export async function runFullScan(): Promise<RevshareData> {
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
       cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
+      txs: (txsByWallet.get(w) || []).slice(0, 60), // newest 60 — payload bound
       pct: pool > 0n ? Number((a.locked * 10000n) / pool) / 100 : 0,
     }))
     .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : y.pending > x.pending ? 1 : -1));
