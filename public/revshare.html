@@ -706,15 +706,21 @@
     for (const k of Object.keys(row.cohorts || {})) if (k <= ym) sum += row.cohorts[k];
     return sum;
   }
-  // dev's round-1 stake (da 7,365,272 it genuinely put in2 pool 1) keeps earning
-  // evry cycle while it stays locked — pro-rata like any holder. evryting da dev
-  // wallet deposited AFTER round 1 iz custodial (pooled holder tokens passing
-  // thru 4 locking) n never earns, so dev's eligible basis iz frozen at itz
-  // round-1 cohorts. confirmed by ism aug 2026.
+  // dev earns ONLY on itz own genuine stakes — evryting else it holds iz
+  // custodial (pooled holder tokens passing thru 4 locking) n never earns.
+  // stake 1: da 7,365,272 it put in2 pool 1 (chain-derived: dev treasury
+  //   deposits swept b4 may 11 = cohorts ≤ DEV_R1_YM) — earns from jul.
+  // stake 2: 3,461,005.205545 of da jul-31 lock wuz dev's own — it went
+  //   STRAIGHT from dev's wallet in2 streamflow, never thru treasury, so
+  //   da scan cant see it; amount attested by ism aug 2026. locked jul 31
+  //   → first full month iz aug → first pays sep 1 (cohort 2026-09).
   const DEV_R1_YM = '2026-07';
+  const DEV_EXTRA_STAKES = { '2026-09': 3461005205545n }; // raw units · jul-31 lock
   function eligOf(row, ym) {
-    if (row.role === 'dev') return ym >= DEV_R1_YM ? eligibleAmt(row, DEV_R1_YM) : 0n;
-    return eligibleAmt(row, ym);
+    if (row.role !== 'dev') return eligibleAmt(row, ym);
+    let sum = ym >= DEV_R1_YM ? eligibleAmt(row, DEV_R1_YM) : 0n;
+    for (const k of Object.keys(DEV_EXTRA_STAKES)) if (k <= ym) sum += DEV_EXTRA_STAKES[k];
+    return sum;
   }
   function fmtSol(lamports) {
     const v = Number(lamports) / 1e9;
@@ -1406,6 +1412,8 @@
         .map(([ym, amt]) => r.role === 'dev' && ym > DEV_R1_YM
           ? fmtAmt(toUi(amt)) + ' custodial (locked 4 da holders) \u2192 never earns 4 dev'
           : fmtAmt(toUi(amt)) + ' in da lock by ' + cutoffLabel(ym) + ' \u2192 earns from ' + ymLabel(ym));
+      if (r.role === 'dev') for (const [ym, amt] of Object.entries(DEV_EXTRA_STAKES))
+        parts.push(fmtAmt(toUi(amt)) + ' own stake locked jul 31 (direct, not thru treasury) \u2192 earns from ' + ymLabel(ym));
       return parts.length ? esc(parts.join('  \u00b7  ')) : '';
     };
     const monthCell = (r, ym) => {
@@ -1435,7 +1443,7 @@
       tr.innerHTML =
         '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
         '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) +
-          (r.role === 'dev' ? ' <span class="devtag" title="earns only on itz round-1 stake of ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' \u2014 da rest iz held 4 da holders">dev \u00b7 custodian</span>' : '') + '</span></td>' +
+          (r.role === 'dev' ? ' <span class="devtag" title="earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 da rest iz held 4 da holders">dev \u00b7 custodian</span>' : '') + '</span></td>' +
         '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
         '<td>' + (poolElig[nowYm] <= 0n || eligOf(r, nowYm) <= 0n
           ? '\u2013'
@@ -1463,7 +1471,7 @@
       (r.pending > 0n ? ' · pending ' + fmtAmt(toUi(r.pending)) : '') +
       (r.returned > 0n ? ' · returned ' + fmtAmt(toUi(r.returned)) : '') +
       (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '') +
-      (r.role === 'dev' ? ' · earns only on itz ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' round-1 stake' : '');
+      (r.role === 'dev' ? ' · earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (r1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock · from ' + ymLabel(ym) + ')').join(' + ') : '');
     const tb = $('hmodalRows');
     tb.innerHTML = '';
     const txs = r.txs || [];
