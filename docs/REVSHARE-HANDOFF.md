@@ -34,18 +34,23 @@ contributors show, payouts read from chain. see prs #3-#23 4 da full trail.
 
 deez r product decisions, not bugs. dont "fix" dem:
 
-1. **dev earns rev share ONLY on itz round-1 stake.** da dev wallet genuinely
-   put 7,365,272 in2 pool 1 (apr 29-30 deposits · may-11 sweep · 2026-07
-   cohort) n wuz paid 2.707 sol jul 1 for it — dat stake keeps earning evry
-   cycle while it stays locked, pro-rata like any holder (so it IZ in da
-   aug/sep pools). evryting dev deposited AFTER round 1 iz custodial —
-   pooled holder tokens passing thru 4 locking — n NEVER earns: da page
-   freezes dev's eligible basis at itz r1 cohorts (`eligOf` + `DEV_R1_YM` in
-   revshare.html). dev also signs da time-based "dev lock"s. its row renders
-   pinned last wit da "dev · custodian" tag. NOTE: da scan cannot see a dev
-   unlock (streamflow escrow → dev never touches treasury), so da r1 basis
-   iz frozen by DATE, not by live balance — if da r1 stake ever fully
-   unlocks n leaves streamflow, revisit eligOf/DEV_R1_YM by hand.
+1. **dev earns rev share ONLY on itz own genuine stakes** (ism-confirmed
+   aug 2026), a fixed two-entry schedule in `eligOf` (revshare.html):
+   - **stake 1 — round 1: 7,365,272** (apr 29-30 deposits · may-11 sweep ·
+     2026-07 cohort, chain-derived). paid 2.707 sol jul 1; keeps earning
+     evry cycle — aug, sep, onward.
+   - **stake 2 — jul-31 lock: 3,461,005.205545** (`DEV_EXTRA_STAKES`).
+     dev's own portion of da jul-31 lock. it went STRAIGHT from dev's
+     wallet in2 streamflow — never thru treasury — so da scan cannot see
+     it; da amount iz attested by ism. locked jul 31 → first full month
+     aug → first pays sep 1 (cohort 2026-09).
+   evryting ELSE dev deposited after round 1 iz custodial — pooled holder
+   tokens passing thru 4 locking — n NEVER earns. dev also signs da
+   time-based "dev lock"s. its row renders pinned last wit da "dev ·
+   custodian" tag. NOTE: da scan cannot see dev unlocks either (escrow →
+   dev never touches treasury), so both stakes r fixed by DATE/amount, not
+   live balance — if a dev stake ever leaves streamflow, or dev adds a NEW
+   genuine stake, edit `DEV_EXTRA_STAKES`/`DEV_R1_YM` by hand.
 
 2. **cohort rule** (reverse-engineered from round 1, verified 2 da lamport):
    money earns da first calendar month itz locked for FROM DA START, paid on
