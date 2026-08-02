@@ -411,9 +411,11 @@ export type ContribRow = {
   /** per-wallet on-chain evidence — evry tx behind da balance, newest first.
    *  amount iz $spurdo raw units for deposit/return, LAMPORTS for payout. */
   txs: ContribTx[];
-  /** "dev" = custodian row: real deposits n da jul round-1 payout shown 4
-   *  history, but EXCLUDED from pool, share%, n evry payout projection
-   *  (policy: dev earns nothing from aug 2026 onward). */
+  /** "dev" = custodian row. excluded from `pool` (holder ledger / vault
+   *  check) n pct stays 0, but da RENDER layer pays itz round-1 stake evry
+   *  cycle: eligOf() in revshare.html freezes dev's eligible basis at itz
+   *  r1 cohorts (DEV_R1_YM) — deposits after round 1 r custodial n never
+   *  earn. policy: REVSHARE-HANDOFF.md item 1. */
   role?: "dev";
 };
 
@@ -585,9 +587,10 @@ export async function runFullScan(): Promise<RevshareData> {
   for (const d of tre.ins) {
     if (d.owner === "?") continue;
     // dev's own deposits DO flow thru da agg so its history renders (it
-    // really contributed 7.37m 2 pool 1 n got paid 4 it jul 1) — but da
-    // dev row iz excluded from pool/share/projections below. other
-    // internal wallets stay out entirely.
+    // really contributed 7.37m 2 pool 1 n got paid 4 it jul 1) — da dev
+    // row stays out of pool/share% below, but da render pays itz frozen
+    // r1 basis evry cycle (eligOf in revshare.html). other internal
+    // wallets stay out entirely.
     if (internal.has(d.owner) && d.owner !== DEV_WALLET) continue;
     // self-owned source acct = streamflow escrow (authority == own address).
     // dats lock proceeds flowing back in2 da treasury — dev-side money, not

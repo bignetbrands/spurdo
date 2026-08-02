@@ -318,7 +318,7 @@
     }
     .hmodal .hfoot { font-size: 0.75rem; margin-top: 10px; opacity: 0.8; }
     .wallet-btn { cursor: pointer; text-decoration: underline dotted; }
-    .ctable tbody tr.devrow td { opacity: 0.68; font-style: italic; }
+    .ctable tbody tr.devrow td { opacity: 0.8; font-style: italic; }
     .devtag { font-size: 0.62rem; background: var(--ink); color: var(--paper); padding: 1px 5px; margin-left: 5px; font-style: normal; }
     /* da card tilt (-2deg) shifts da right edge ~a full row across a 10-column
        table, so reading straight across lands u on da wrong row. keep da tilt
@@ -537,7 +537,7 @@
         <tbody id="hmodalRows"></tbody>
       </table>
     </div>
-    <div class="hfoot">evry row iz a real on-chain tx — click em n check on solscan. deposits show da payout month dey earn from; returns r benis going back 2 da wallet; payouts r SOL from da revshare wallet :D</div>
+    <div class="hfoot">evry row iz a real on-chain tx — click em n check on solscan. deposits show da payout month dey earn from (custodial = held 4 da holders, never earns); returns r benis going back 2 da wallet; payouts r SOL from da revshare wallet :D</div>
   </div>
 </div>
 
@@ -705,6 +705,16 @@
     let sum = 0n;
     for (const k of Object.keys(row.cohorts || {})) if (k <= ym) sum += row.cohorts[k];
     return sum;
+  }
+  // dev's round-1 stake (da 7,365,272 it genuinely put in2 pool 1) keeps earning
+  // evry cycle while it stays locked — pro-rata like any holder. evryting da dev
+  // wallet deposited AFTER round 1 iz custodial (pooled holder tokens passing
+  // thru 4 locking) n never earns, so dev's eligible basis iz frozen at itz
+  // round-1 cohorts. confirmed by ism aug 2026.
+  const DEV_R1_YM = '2026-07';
+  function eligOf(row, ym) {
+    if (row.role === 'dev') return ym >= DEV_R1_YM ? eligibleAmt(row, DEV_R1_YM) : 0n;
+    return eligibleAmt(row, ym);
   }
   function fmtSol(lamports) {
     const v = Number(lamports) / 1e9;
@@ -1374,7 +1384,7 @@
     const poolElig = {};
     for (const ym of months) {
       let sum = 0n;
-      for (const r of rows) { if (r.role !== 'dev') sum += eligibleAmt(r, ym); }
+      for (const r of rows) sum += eligOf(r, ym);
       poolElig[ym] = sum;
     }
     const head = $('cHead');
@@ -1393,17 +1403,17 @@
     };
     const cohortTitle = (r) => {
       const parts = Object.entries(r.cohorts || {}).sort()
-        .map(([ym, amt]) => fmtAmt(toUi(amt)) + ' in da lock by ' + cutoffLabel(ym) + ' \u2192 earns from ' + ymLabel(ym));
+        .map(([ym, amt]) => r.role === 'dev' && ym > DEV_R1_YM
+          ? fmtAmt(toUi(amt)) + ' custodial (locked 4 da holders) \u2192 never earns 4 dev'
+          : fmtAmt(toUi(amt)) + ' in da lock by ' + cutoffLabel(ym) + ' \u2192 earns from ' + ymLabel(ym));
       return parts.length ? esc(parts.join('  \u00b7  ')) : '';
     };
     const monthCell = (r, ym) => {
       const got = (r.paidByMonth || {})[ym] || 0n;
       if (got > 0n) return fmtSol(got); // actually landed on chain
-      // custodian row: history only — no projections, no future share
-      if (r.role === 'dev') return '\u2013';
       // a PAST month wit payouts iz settled — nothing more iz coming
       if (paidTotals[ym] > 0n && ym < nowYm) return '\u2013';
-      const elig = eligibleAmt(r, ym);
+      const elig = eligOf(r, ym);
       if (elig <= 0n || poolElig[ym] <= 0n) return '\u2013';
       // show da amount da payout iz computed on AND da lock cutoff it met.
       // widout dis a wallet dat locked more recently looks like it shouldnt
@@ -1425,11 +1435,11 @@
       tr.innerHTML =
         '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
         '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) +
-          (r.role === 'dev' ? ' <span class="devtag">dev \u00b7 custodian</span>' : '') + '</span></td>' +
+          (r.role === 'dev' ? ' <span class="devtag" title="earns only on itz round-1 stake of ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' \u2014 da rest iz held 4 da holders">dev \u00b7 custodian</span>' : '') + '</span></td>' +
         '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
-        '<td>' + (r.role === 'dev' || poolElig[nowYm] <= 0n
+        '<td>' + (poolElig[nowYm] <= 0n || eligOf(r, nowYm) <= 0n
           ? '\u2013'
-          : (Number((eligibleAmt(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
+          : (Number((eligOf(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
@@ -1452,7 +1462,8 @@
       ' · locked ' + fmtAmt(toUi(r.locked)) +
       (r.pending > 0n ? ' · pending ' + fmtAmt(toUi(r.pending)) : '') +
       (r.returned > 0n ? ' · returned ' + fmtAmt(toUi(r.returned)) : '') +
-      (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '');
+      (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '') +
+      (r.role === 'dev' ? ' · earns only on itz ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' round-1 stake' : '');
     const tb = $('hmodalRows');
     tb.innerHTML = '';
     const txs = r.txs || [];
@@ -1466,7 +1477,11 @@
         : tx.kind === 'return' ? 'returned 2 wallet'
         : 'revshare payout';
       const amt = tx.kind === 'payout' ? fmtSol(tx.amount) : fmtAmt(toUi(tx.amount));
-      const ym = tx.kind === 'deposit' ? (tx.ym ? ymLabel(tx.ym) : 'pending') : '\u2013';
+      // dev deposits after round 1 r custodial \u2014 dey never earn, so dont
+      // label dem wit an earning month like holder deposits get
+      const ym = tx.kind !== 'deposit' ? '\u2013'
+        : r.role === 'dev' && (!tx.ym || tx.ym > DEV_R1_YM) ? 'custodial'
+        : tx.ym ? ymLabel(tx.ym) : 'pending';
       tr.innerHTML =
         '<td>' + fmtDate(tx.t) + '</td>' +
         '<td>' + kind + '</td>' +
@@ -1500,7 +1515,7 @@
       Number(r.paid) / 1e9, // sol
       ...months.flatMap(ym => [
         Number((r.paidByMonth || {})[ym] || 0n) / 1e9,
-        toUi(eligibleAmt(r, ym)),
+        toUi(eligOf(r, ym)),
       ]),
     ].join(','));
     const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
