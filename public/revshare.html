@@ -318,6 +318,8 @@
     }
     .hmodal .hfoot { font-size: 0.75rem; margin-top: 10px; opacity: 0.8; }
     .wallet-btn { cursor: pointer; text-decoration: underline dotted; }
+    .ctable tbody tr.devrow td { opacity: 0.68; font-style: italic; }
+    .devtag { font-size: 0.62rem; background: var(--ink); color: var(--paper); padding: 1px 5px; margin-left: 5px; font-style: normal; }
     /* da card tilt (-2deg) shifts da right edge ~a full row across a 10-column
        table, so reading straight across lands u on da wrong row. keep da tilt
        on evryding else, kill it here, n stripe/highlight rows 2 track by eye. */
@@ -582,7 +584,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v15';
+  const CACHE_KEY = 'spurdo_revshare_v16';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -1221,7 +1223,8 @@
       const txsByWallet = new Map();
       const pushTx = (w, tx) => { const l = txsByWallet.get(w) || []; l.push(tx); txsByWallet.set(w, l); };
       for (const d of tre.ins) {
-        if (d.owner === '?' || internal.has(d.owner)) continue;
+        if (d.owner === '?') continue;
+        if (internal.has(d.owner) && d.owner !== DEV_WALLET) continue;
         if (d.srcAddr && d.owner === d.srcAddr) continue;
         pushTx(d.owner, { t: d.time || 0, kind: 'deposit', amount: d.amount, sig: d.sig, ym: cohortOfDep(d.time || 0) });
       }
@@ -1238,7 +1241,8 @@
       // event timeline: deposits go pending → sweep 2 dev locks dem → returns drain pending (refund) den locked (unlock)
       const events = [];
       for (const d of tre.ins) {
-        if (d.owner === '?' || internal.has(d.owner)) continue;
+        if (d.owner === '?') continue;
+        if (internal.has(d.owner) && d.owner !== DEV_WALLET) continue; // dev's own deposits render (custodian row)
         if (d.srcAddr && d.owner === d.srcAddr) continue; // streamflow escrow, not a holder
         events.push({ t: d.time || 0, ord: 0, type: 'dep', w: d.owner, amt: d.amount });
       }
@@ -1291,7 +1295,10 @@
       }
 
       let pool = 0n, pendingTotal = 0n;
-      for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
+      for (const [w, a] of agg.entries()) {
+        if (w === DEV_WALLET) continue; // custodian — never in da holder pool
+        pool += a.locked; pendingTotal += a.pending;
+      }
 
       CONTRIB_ROWS = [...agg.entries()]
         .filter(([w, a]) => a.deposited > 0n)   // evry contributor gets a row — refunded ones show returned
@@ -1302,9 +1309,14 @@
           paid: paid.get(w) || 0n,
           cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
           txs: (txsByWallet.get(w) || []).slice(0, 60),
-          pct: pool > 0n ? Number(a.locked * 10000n / pool) / 100 : 0,
+          pct: w === DEV_WALLET || pool <= 0n ? 0 : Number(a.locked * 10000n / pool) / 100,
+          role: w === DEV_WALLET ? 'dev' : undefined,
         }))
-        .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1)));
+        .sort((x, y) => {
+          if (x.role === 'dev') return 1;
+          if (y.role === 'dev') return -1;
+          return y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1);
+        });
 
       REV_SOL = await rpcCall('getBalance', [REVSHARE_WALLET]).then(r => BigInt((r && r.value) || 0)).catch(() => 0n);
       renderContribs(CONTRIB_ROWS, pool, pendingTotal, sent2dev);
@@ -1362,7 +1374,7 @@
     const poolElig = {};
     for (const ym of months) {
       let sum = 0n;
-      for (const r of rows) sum += eligibleAmt(r, ym);
+      for (const r of rows) { if (r.role !== 'dev') sum += eligibleAmt(r, ym); }
       poolElig[ym] = sum;
     }
     const head = $('cHead');
@@ -1387,6 +1399,8 @@
     const monthCell = (r, ym) => {
       const got = (r.paidByMonth || {})[ym] || 0n;
       if (got > 0n) return fmtSol(got); // actually landed on chain
+      // custodian row: history only — no projections, no future share
+      if (r.role === 'dev') return '\u2013';
       // a PAST month wit payouts iz settled — nothing more iz coming
       if (paidTotals[ym] > 0n && ym < nowYm) return '\u2013';
       const elig = eligibleAmt(r, ym);
@@ -1407,13 +1421,15 @@
     tb.innerHTML = '';
     rows.forEach((r, i) => {
       const tr = document.createElement('tr');
+      if (r.role === 'dev') tr.className = 'devrow';
       tr.innerHTML =
-        '<td>' + (i + 1) + '</td>' +
-        '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span></td>' +
+        '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
+        '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) +
+          (r.role === 'dev' ? ' <span class="devtag">dev \u00b7 custodian</span>' : '') + '</span></td>' +
         '<td>' + fmtAmt(toUi(r.locked)) + '</td>' +
-        '<td>' + (poolElig[nowYm] > 0n
-          ? (Number((eligibleAmt(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%'
-          : '\u2013') + '</td>' +
+        '<td>' + (r.role === 'dev' || poolElig[nowYm] <= 0n
+          ? '\u2013'
+          : (Number((eligibleAmt(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +

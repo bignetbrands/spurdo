@@ -411,6 +411,10 @@ export type ContribRow = {
   /** per-wallet on-chain evidence — evry tx behind da balance, newest first.
    *  amount iz $spurdo raw units for deposit/return, LAMPORTS for payout. */
   txs: ContribTx[];
+  /** "dev" = custodian row: real deposits n da jul round-1 payout shown 4
+   *  history, but EXCLUDED from pool, share%, n evry payout projection
+   *  (policy: dev earns nothing from aug 2026 onward). */
+  role?: "dev";
 };
 
 export type ContribTx = {
@@ -579,7 +583,12 @@ export async function runFullScan(): Promise<RevshareData> {
   type Ev = { t: number; ord: number; type: "dep" | "sweep" | "ret"; w?: string; amt?: bigint };
   const events: Ev[] = [];
   for (const d of tre.ins) {
-    if (d.owner === "?" || internal.has(d.owner)) continue;
+    if (d.owner === "?") continue;
+    // dev's own deposits DO flow thru da agg so its history renders (it
+    // really contributed 7.37m 2 pool 1 n got paid 4 it jul 1) — but da
+    // dev row iz excluded from pool/share/projections below. other
+    // internal wallets stay out entirely.
+    if (internal.has(d.owner) && d.owner !== DEV_WALLET) continue;
     // self-owned source acct = streamflow escrow (authority == own address).
     // dats lock proceeds flowing back in2 da treasury — dev-side money, not
     // a holder deposit. burned us: da jun-29 lock's escrow showed up as a
@@ -660,7 +669,8 @@ export async function runFullScan(): Promise<RevshareData> {
     txsByWallet.set(w, l);
   };
   for (const d of tre.ins) {
-    if (d.owner === "?" || internal.has(d.owner)) continue;
+    if (d.owner === "?") continue;
+    if (internal.has(d.owner) && d.owner !== DEV_WALLET) continue;
     if (d.srcAddr && d.owner === d.srcAddr) continue; // streamflow escrow
     pushTx(d.owner, { t: d.time || 0, kind: "deposit", amount: d.amount, sig: d.sig, ym: cohortOfDep(d.time || 0) });
   }
@@ -675,7 +685,10 @@ export async function runFullScan(): Promise<RevshareData> {
   for (const l of txsByWallet.values()) l.sort((a, b) => b.t - a.t);
 
   let pool = 0n, pendingTotal = 0n;
-  for (const a of agg.values()) { pool += a.locked; pendingTotal += a.pending; }
+  for (const [w, a] of agg.entries()) {
+    if (w === DEV_WALLET) continue; // custodian — never in da holder pool
+    pool += a.locked; pendingTotal += a.pending;
+  }
   const contribRows: ContribRow[] = [...agg.entries()]
     // evry wallet dat ever sent 2 da treasury gets a row — incl fully-refunded ones
     // (locked 0 · pending 0 · returned = all of it). da returned column iz da proof
@@ -686,9 +699,14 @@ export async function runFullScan(): Promise<RevshareData> {
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
       cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
       txs: (txsByWallet.get(w) || []).slice(0, 60), // newest 60 — payload bound
-      pct: pool > 0n ? Number((a.locked * 10000n) / pool) / 100 : 0,
+      pct: w === DEV_WALLET || pool <= 0n ? 0 : Number((a.locked * 10000n) / pool) / 100,
+      ...(w === DEV_WALLET ? { role: "dev" as const } : {}),
     }))
-    .sort((x, y) => (y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : y.pending > x.pending ? 1 : -1));
+    .sort((x, y) => {
+      if (x.role === "dev") return 1;   // custodian row pinned last
+      if (y.role === "dev") return -1;
+      return y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : y.pending > x.pending ? 1 : -1;
+    });
 
   const nodeAgg: Record<string, { ok: number; err: number; n: number }> = {};
   for (const s of nodeStats) {
