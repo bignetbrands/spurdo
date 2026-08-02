@@ -310,6 +310,7 @@
     .hmodal th:first-child, .hmodal td:first-child { text-align: left; }
     .hmodal tr.k-return td { color: #a04000; }
     .hmodal tr.k-payout td { color: #1e7145; }
+    .hmodal tr.k-alloc td { color: #6c3483; }
     .hmodal .hclose {
       position: absolute; top: 8px; right: 10px;
       background: var(--red-troll); color: var(--paper);
@@ -584,7 +585,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v16';
+  const CACHE_KEY = 'spurdo_revshare_v17';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -716,6 +717,17 @@
   //   → first full month iz aug → first pays sep 1 (cohort 2026-09).
   const DEV_R1_YM = '2026-07';
   const DEV_EXTRA_STAKES = { '2026-09': 3461005205545n }; // raw units · jul-31 lock
+  // jun-21 ansem allocation — treasury sent 15m 2 ansem, pooled from three
+  // 5m legs (8FGj / 4JLSS / dev). da legs get stripped from der aug cohorts
+  // in BOTH engines n show up as "alloc" rows in da receipts modal.
+  const ANSEM_ALLOC_SIG = '2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy';
+  const ANSEM_ALLOC_T = 1782016214; // 2026-06-21 04:30:14 utc
+  const ANSEM_ALLOC_YM = '2026-08';
+  const ANSEM_ALLOC_LEGS = {
+    '8FGj2bv5WuqiRCHzUDsC4tK9crbitNpj6GzG6UQD3c1N': 5000000000000n,
+    '4JLSS9bKhsbH9pN9sA2pGWdmf5Q8aAcr5P8kUb8eSzJ2': 5000000000000n,
+    'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV': 5000000000000n,
+  };
   function eligOf(row, ym) {
     if (row.role !== 'dev') return eligibleAmt(row, ym);
     let sum = ym >= DEV_R1_YM ? eligibleAmt(row, DEV_R1_YM) : 0n;
@@ -1316,6 +1328,22 @@
         }
       }
 
+      // ansem allocation: strip each leg from itz aug cohort n show da
+      // outflow in dat wallet's ledger (mirrors da server engine exactly)
+      for (const [w, amt] of Object.entries(ANSEM_ALLOC_LEGS)) {
+        const a = agg.get(w);
+        if (!a) continue;
+        const have = a.cohorts[ANSEM_ALLOC_YM] || 0n;
+        const ded = have < amt ? have : amt;
+        if (ded <= 0n) continue;
+        a.cohorts[ANSEM_ALLOC_YM] = have - ded;
+        if (a.cohorts[ANSEM_ALLOC_YM] === 0n) delete a.cohorts[ANSEM_ALLOC_YM];
+        a.locked -= ded;
+        pushTx(w, { t: ANSEM_ALLOC_T, kind: 'alloc', amount: ded, sig: ANSEM_ALLOC_SIG });
+        const l = txsByWallet.get(w);
+        if (l) l.sort((x, y) => y.t - x.t); // ledger wuz already sorted — re-sort dis wallet
+      }
+
       let pool = 0n, pendingTotal = 0n;
       for (const [w, a] of agg.entries()) {
         if (w === DEV_WALLET) continue; // custodian — never in da holder pool
@@ -1477,6 +1505,8 @@
       ' · locked ' + fmtAmt(toUi(r.locked)) +
       (r.pending > 0n ? ' · pending ' + fmtAmt(toUi(r.pending)) : '') +
       (r.returned > 0n ? ' · returned ' + fmtAmt(toUi(r.returned)) : '') +
+      ((() => { const al = (r.txs || []).filter(t => t.kind === 'alloc').reduce((a, t) => a + t.amount, 0n);
+        return al > 0n ? ' · ansem allocation ' + fmtAmt(toUi(al)) : ''; })()) +
       (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '') +
       (r.role === 'dev' ? ' · earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (r1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock · from ' + ymLabel(ym) + ')').join(' + ') : '');
     const tb = $('hmodalRows');
@@ -1490,6 +1520,7 @@
       tr.className = 'k-' + tx.kind;
       const kind = tx.kind === 'deposit' ? 'sent 2 treasury'
         : tx.kind === 'return' ? 'returned 2 wallet'
+        : tx.kind === 'alloc' ? 'ansem allocation (left da pool)'
         : 'revshare payout';
       const amt = tx.kind === 'payout' ? fmtSol(tx.amount) : fmtAmt(toUi(tx.amount));
       // dev deposits after round 1 r custodial \u2014 dey never earn, so dont
