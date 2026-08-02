@@ -78,6 +78,17 @@ deez r product decisions, not bugs. dont "fix" dem:
    deposit history. dats why refunds flow back thru treasury (da returned
    column) n why dis accounting exists at all.
 
+6. **da jun-21 ansem allocation.** treasury sent 15,000,000 2 da ansem
+   wallet `GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52` on jun 21 2026
+   04:30 utc (sig `2L3kc9pa2m…EryLcjy`, verified on-chain — da 15m still
+   sits there). it wuz pooled from three 5m legs (ism-attested): 8FGj…
+   (may-28 deposit), 4JLSS… (may-17 deposit), n dev (custodial). dose
+   legs got swept in2 2026-08 cohorts B4 da transfer, so BOTH engines
+   strip 5m from each leg's aug cohort (`ANSEM_ALLOC_LEGS`, server +
+   twin) n record an "alloc" entry in dat wallet's receipts modal —
+   tokens dat went 2 ansem earn NOTHING. if another allocation ever
+   happens, add itz legs 2 da same constant.
+
 ## maybe next
 
 - ~~cron route to refresh da redis cache nightly~~ done (pr #16, 04:20 utc)

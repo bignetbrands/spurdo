@@ -26,6 +26,21 @@ const PAYOUT_PROXIES: Record<string, string> = {
 };
 const STREAMFLOW_PROGRAM = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m";
 const STREAMFLOW_API = "https://api-public.streamflow.finance";
+// jun-21 ansem allocation: treasury sent 15m 2 da ansem wallet in one tx
+// (verified on-chain — da 15m still sits there). it wuz pooled from three
+// 5m legs (ism-attested): 8FGj…, 4JLSS…, n dev. da legs got swept in2
+// 2026-08 cohorts B4 da transfer went out, so da engine strips 5m from
+// each wallet's aug cohort n records an "alloc" ledger entry — dose
+// tokens left da pool 4 da ansem deal n never earn rev share.
+export const ANSEM_WALLET = "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52";
+const ANSEM_ALLOC_SIG = "2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy";
+const ANSEM_ALLOC_T = 1782016214; // 2026-06-21 04:30:14 utc
+const ANSEM_ALLOC_YM = "2026-08"; // da cohort dose legs were swept in2
+const ANSEM_ALLOC_LEGS: Record<string, bigint> = {
+  "8FGj2bv5WuqiRCHzUDsC4tK9crbitNpj6GzG6UQD3c1N": 5_000_000_000_000n,
+  "4JLSS9bKhsbH9pN9sA2pGWdmf5Q8aAcr5P8kUb8eSzJ2": 5_000_000_000_000n,
+  [DEV_WALLET]: 5_000_000_000_000n,
+};
 
 function rpcUrls(): string[] {
   return [
@@ -422,7 +437,7 @@ export type ContribRow = {
 
 export type ContribTx = {
   t: number;
-  kind: "deposit" | "return" | "payout";
+  kind: "deposit" | "return" | "payout" | "alloc"; // alloc = ansem allocation leg (tokens left da pool)
   amount: bigint;
   sig: string;
   /** deposits only: da payout month dis money earns from (via da sweep dat locked it) */
@@ -685,6 +700,20 @@ export async function runFullScan(): Promise<RevshareData> {
   for (const o of rev.solOuts) {
     const w = PAYOUT_PROXIES[o.dest] || o.dest;
     pushTx(w, { t: o.time, kind: "payout", amount: o.lamports, sig: o.sig });
+  }
+  // ansem allocation: strip each leg from itz aug cohort n show da outflow
+  // in dat wallet's ledger. clamped 2 wat da cohort actually holds so
+  // synthetic (smaller) chains still replay cleanly.
+  for (const [w, amt] of Object.entries(ANSEM_ALLOC_LEGS)) {
+    const a = agg.get(w);
+    if (!a) continue;
+    const have = a.cohorts[ANSEM_ALLOC_YM] || 0n;
+    const ded = have < amt ? have : amt;
+    if (ded <= 0n) continue;
+    a.cohorts[ANSEM_ALLOC_YM] = have - ded;
+    if (a.cohorts[ANSEM_ALLOC_YM] === 0n) delete a.cohorts[ANSEM_ALLOC_YM];
+    a.locked -= ded;
+    pushTx(w, { t: ANSEM_ALLOC_T, kind: "alloc", amount: ded, sig: ANSEM_ALLOC_SIG });
   }
   for (const l of txsByWallet.values()) l.sort((a, b) => b.t - a.t);
 
