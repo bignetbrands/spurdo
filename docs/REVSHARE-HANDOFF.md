@@ -89,6 +89,29 @@ deez r product decisions, not bugs. dont "fix" dem:
    tokens dat went 2 ansem earn NOTHING. if another allocation ever
    happens, add itz legs 2 da same constant.
 
+7. **vested unlocks (monthly).** da pool locks vest linearly over 24
+   months n da multisig claims each month's tranche back 2 treasury.
+   first one: aug 2 2026 17:00 utc, 6,571,458.879 = 157,715,013.1 / 24
+   from da jul-3 "Benis Multisig" lock (sig `4vtn8P8R…KFnPyMX`). a
+   claimed tranche unlocks evry contributor of dat cohort PRO-RATA
+   (floor(cohort/24) each, dust unattributed) — der locked n eligible
+   basis drops, so da NEXT cycle's pool shrinks accordingly, n da
+   "unlocked" column + an "unlock" receipts-modal entry show it. dis
+   keeps da vault check honest (streamflow really lost da tranche).
+   engine constant: `VESTED_UNLOCKS` (server + twin) — entries apply IN
+   ORDER against da REMAINING cohort, so month 2 = a new entry wit
+   den 23n, den 22n, etc (each equals 1/24 of original). da jun-29
+   lock's june tranche (833k) iz NOT listed — it wuz re-swept in2 da
+   round-two lock so it never stopped being locked. WHEN A TRANCHE GETS
+   RE-LOCKED: remove or offset itz entry, or holders lose basis on
+   money dat went back in2 streamflow. drains splice IN2 da event
+   timeline at claim time, so returns after a claim replay against da
+   post-drain balance (a fully-exited wallet ends at locked 0, no
+   phantom basis). NOTE: da csv's eligible_YM columns r CURRENT basis
+   (post-drain) — dey r NOT da as-settled basis of already-paid cycles;
+   da paid_YM_sol columns carry da settled truth (jul wuz paid on da
+   full 157,702,436 b4 any tranche vested).
+
 ## maybe next
 
 - ~~cron route to refresh da redis cache nightly~~ done (pr #16, 04:20 utc)

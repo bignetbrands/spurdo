@@ -32,6 +32,23 @@ const STREAMFLOW_API = "https://api-public.streamflow.finance";
 // 2026-08 cohorts B4 da transfer went out, so da engine strips 5m from
 // each wallet's aug cohort n records an "alloc" ledger entry — dose
 // tokens left da pool 4 da ansem deal n never earn rev share.
+// vesting tranches: da pool locks vest linearly over 24 months n da multisig
+// claims each month's tranche back 2 treasury (escrow → treasury). a claimed
+// tranche unlocks EVRY contributor of dat cohort pro-rata (floor(cohort×num/den)
+// each — dust stays unattributed, same as ansem). entries r applied IN ORDER
+// against da cohort's REMAINING balance, so when month 2's tranche iz claimed
+// add a NEW entry wit den = months left (23n, den 22n after dat, …) — dat
+// equals 1/24 of da original evry time. (da jun-29 lock's 833k june tranche
+// iz NOT here — it got re-swept in2 da round-two lock, so itz still locked
+// n draining it would double-count.)
+const VESTED_UNLOCKS: { ym: string; num: bigint; den: bigint; t: number; sig: string }[] = [
+  // benis multisig lock (jul 3 · 157,715,013 · da r1 pool): tranche 1/24 =
+  // 6,571,458.879 claimed aug 2 17:00 utc, sitting in treasury
+  {
+    ym: "2026-07", num: 1n, den: 24n, t: 1785690008,
+    sig: "4vtn8P8RbdPx2dbUeDxMwVhAC5SpzsPx8XAV1oKrhUrVngHR26oyw3cwrYPNjwd6HZ5qkgk9qUZK3bnr1KFnPyMX",
+  },
+];
 export const ANSEM_WALLET = "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52";
 const ANSEM_ALLOC_SIG = "2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy";
 const ANSEM_ALLOC_T = 1782016214; // 2026-06-21 04:30:14 utc
@@ -420,6 +437,8 @@ async function fetchLocksApi(): Promise<Lock[]> {
 // paidByMonth = actual sol payouts keyed by da month (YYYY-MM) of da transfer.
 export type ContribRow = {
   wallet: string; locked: bigint; pending: bigint; deposited: bigint; returned: bigint;
+  /** vested tranches claimed back 2 treasury — no longer locked, no longer earning */
+  unlocked: bigint;
   n: number; first: number; last: number; paid: bigint; pct: number;
   cohorts: Record<string, bigint>;
   paidByMonth: Record<string, bigint>;
@@ -437,7 +456,7 @@ export type ContribRow = {
 
 export type ContribTx = {
   t: number;
-  kind: "deposit" | "return" | "payout" | "alloc"; // alloc = ansem allocation leg (tokens left da pool)
+  kind: "deposit" | "return" | "payout" | "alloc" | "unlock"; // alloc = ansem leg · unlock = vested tranche back 2 treasury
   amount: bigint;
   sig: string;
   /** deposits only: da payout month dis money earns from (via da sweep dat locked it) */
@@ -598,7 +617,7 @@ export async function runFullScan(): Promise<RevshareData> {
 
   // event timeline: deposit→pending, sweep→locked, returns drain pending den locked
   const internal = new Set(INTERNAL_WALLETS);
-  type Ev = { t: number; ord: number; type: "dep" | "sweep" | "ret"; w?: string; amt?: bigint };
+  type Ev = { t: number; ord: number; type: "dep" | "sweep" | "ret" | "vest"; w?: string; amt?: bigint; vestIdx?: number };
   const events: Ev[] = [];
   for (const d of tre.ins) {
     if (d.owner === "?") continue;
@@ -620,6 +639,13 @@ export async function runFullScan(): Promise<RevshareData> {
     if (o.destOwner === DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: "sweep" }); }
     else if (o.destOwner && !internal.has(o.destOwner)) events.push({ t: o.time || 0, ord: 2, type: "ret", w: o.destOwner, amt: o.amount });
   }
+  // vest events splice in2 da timeline at der real claim time — a return
+  // dat happens AFTER a claim must replay after da drain, or a fully-exited
+  // wallet keeps phantom locked basis (da drain would apply 2 wat's left
+  // instead of wat wuz locked at claim time)
+  for (let i = 0; i < VESTED_UNLOCKS.length; i++) {
+    events.push({ t: VESTED_UNLOCKS[i].t, ord: 3, type: "vest", vestIdx: i });
+  }
   events.sort((a, b) => a.t - b.t || a.ord - b.ord);
 
   type Agg = {
@@ -633,12 +659,28 @@ export async function runFullScan(): Promise<RevshareData> {
     if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0, cohorts: {} }; agg.set(w, a); }
     return a;
   };
+  const unlockedBy = new Map<string, bigint>();
+  const vestTakes: { w: string; take: bigint; t: number; sig: string }[] = [];
   for (const e of events) {
     if (e.type === "dep") {
       const a = get(e.w!);
       a.pending += e.amt!; a.deposited += e.amt!; a.n++;
       if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
       if (e.t > a.last) a.last = e.t;
+    } else if (e.type === "vest") {
+      // claimed tranche drains dat cohort pro-rata AT CLAIM TIME — later
+      // returns replay against da post-drain balance (true chain order)
+      const u = VESTED_UNLOCKS[e.vestIdx!];
+      for (const [w, a] of agg.entries()) {
+        const c = a.cohorts[u.ym] || 0n;
+        const take = (c * u.num) / u.den;
+        if (take <= 0n) continue;
+        a.cohorts[u.ym] = c - take;
+        if (a.cohorts[u.ym] === 0n) delete a.cohorts[u.ym];
+        a.locked -= take;
+        unlockedBy.set(w, (unlockedBy.get(w) || 0n) + take);
+        vestTakes.push({ w, take, t: u.t, sig: u.sig });
+      }
     } else if (e.type === "sweep") {
       // pending → locked, tagged wit da payout month dis sweep qualifies for.
       // a wallet locked in july earns thru august n gets paid sep 1 — lumping
@@ -715,6 +757,9 @@ export async function runFullScan(): Promise<RevshareData> {
     a.locked -= ded;
     pushTx(w, { t: ANSEM_ALLOC_T, kind: "alloc", amount: ded, sig: ANSEM_ALLOC_SIG });
   }
+  // vest drains already replayed inside da event timeline (true chain
+  // order vs returns) — here we just write der ledger entries
+  for (const v of vestTakes) pushTx(v.w, { t: v.t, kind: "unlock", amount: v.take, sig: v.sig });
   for (const l of txsByWallet.values()) l.sort((a, b) => b.t - a.t);
 
   let pool = 0n, pendingTotal = 0n;
@@ -729,6 +774,7 @@ export async function runFullScan(): Promise<RevshareData> {
     .filter(([, a]) => a.deposited > 0n)
     .map(([w, a]) => ({
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
+      unlocked: unlockedBy.get(w) || 0n,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
       cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
       txs: (txsByWallet.get(w) || []).slice(0, 60), // newest 60 — payload bound

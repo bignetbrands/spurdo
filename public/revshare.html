@@ -311,6 +311,7 @@
     .hmodal tr.k-return td { color: #a04000; }
     .hmodal tr.k-payout td { color: #1e7145; }
     .hmodal tr.k-alloc td { color: #6c3483; }
+    .hmodal tr.k-unlock td { color: #21618c; }
     .hmodal .hclose {
       position: absolute; top: 8px; right: 10px;
       background: var(--red-troll); color: var(--paper);
@@ -483,7 +484,7 @@
       <div class="ctable-wrap">
         <table class="ctable">
           <thead>
-            <tr id="cHead"><th>#</th><th>wallet</th><th>locked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>jul</th><th>aug</th><th>sep</th></tr>
+            <tr id="cHead"><th>#</th><th>wallet</th><th>locked</th><th>unlocked</th><th>share</th><th>pending</th><th>returned</th><th>last</th><th>jul</th><th>aug</th><th>sep</th></tr>
           </thead>
           <tbody id="cRows"></tbody>
         </table>
@@ -538,7 +539,7 @@
         <tbody id="hmodalRows"></tbody>
       </table>
     </div>
-    <div class="hfoot">evry row iz a real on-chain tx — click em n check on solscan. deposits show da payout month dey earn from (custodial = held 4 da holders, never earns); returns r benis going back 2 da wallet; payouts r SOL from da revshare wallet :D</div>
+    <div class="hfoot">evry row iz a real on-chain tx — click em n check on solscan. deposits show da payout month dey earn from (custodial = held 4 da holders, never earns); returns r benis going back 2 da wallet; vested unlocks r tranches back in treasury (stop earning til relocked); payouts r SOL from da revshare wallet :D</div>
   </div>
 </div>
 
@@ -585,7 +586,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v17';
+  const CACHE_KEY = 'spurdo_revshare_v18';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -720,6 +721,13 @@
   // jun-21 ansem allocation — treasury sent 15m 2 ansem, pooled from three
   // 5m legs (8FGj / 4JLSS / dev). da legs get stripped from der aug cohorts
   // in BOTH engines n show up as "alloc" rows in da receipts modal.
+  // vested unlocks — da pool locks vest 1/24 monthly; claimed tranches sit in
+  // treasury n stop earning. applied in order against remaining cohort balance
+  // (so month 2 = new entry wit den 23n). mirrors da server engine exactly.
+  const VESTED_UNLOCKS = [
+    { ym: '2026-07', num: 1n, den: 24n, t: 1785690008,
+      sig: '4vtn8P8RbdPx2dbUeDxMwVhAC5SpzsPx8XAV1oKrhUrVngHR26oyw3cwrYPNjwd6HZ5qkgk9qUZK3bnr1KFnPyMX' },
+  ];
   const ANSEM_ALLOC_SIG = '2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy';
   const ANSEM_ALLOC_T = 1782016214; // 2026-06-21 04:30:14 utc
   const ANSEM_ALLOC_YM = '2026-08';
@@ -1285,16 +1293,33 @@
         if (o.destOwner === DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: 'sweep' }); }
         else if (o.destOwner && !internal.has(o.destOwner)) events.push({ t: o.time || 0, ord: 2, type: 'ret', w: o.destOwner, amt: o.amount });
       }
+      // vest events splice in at claim time — returns after a claim must
+      // replay after da drain (mirrors da server engine)
+      for (let i = 0; i < VESTED_UNLOCKS.length; i++) events.push({ t: VESTED_UNLOCKS[i].t, ord: 3, type: 'vest', vestIdx: i });
       events.sort((a, b) => (a.t - b.t) || (a.ord - b.ord));
 
       const agg = new Map();
       const get = (w) => { let a = agg.get(w); if (!a) { a = { locked: 0n, pending: 0n, deposited: 0n, returned: 0n, n: 0, first: 0, last: 0, cohorts: {} }; agg.set(w, a); } return a; };
+      const unlockedBy = new Map();
+      const vestTakes = [];
       for (const e of events) {
         if (e.type === 'dep') {
           const a = get(e.w);
           a.pending += e.amt; a.deposited += e.amt; a.n++;
           if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
           if (e.t > a.last) a.last = e.t;
+        } else if (e.type === 'vest') {
+          const u = VESTED_UNLOCKS[e.vestIdx];
+          for (const [w, a] of agg.entries()) {
+            const c = a.cohorts[u.ym] || 0n;
+            const take = (c * u.num) / u.den;
+            if (take <= 0n) continue;
+            a.cohorts[u.ym] = c - take;
+            if (a.cohorts[u.ym] === 0n) delete a.cohorts[u.ym];
+            a.locked -= take;
+            unlockedBy.set(w, (unlockedBy.get(w) || 0n) + take);
+            vestTakes.push({ w, take, t: u.t, sig: u.sig });
+          }
         } else if (e.type === 'sweep') {
           // cohort = first calendar month da money iz locked for from da start,
           // paid da 1st after dat month. swept on da 1st → dat month counts.
@@ -1343,6 +1368,12 @@
         const l = txsByWallet.get(w);
         if (l) l.sort((x, y) => y.t - x.t); // ledger wuz already sorted — re-sort dis wallet
       }
+      // vest drains already replayed in-timeline — just write der ledger rows
+      for (const v of vestTakes) {
+        pushTx(v.w, { t: v.t, kind: 'unlock', amount: v.take, sig: v.sig });
+        const l = txsByWallet.get(v.w);
+        if (l) l.sort((x, y) => y.t - x.t);
+      }
 
       let pool = 0n, pendingTotal = 0n;
       for (const [w, a] of agg.entries()) {
@@ -1355,6 +1386,7 @@
         .map(([w, a]) => ({
           wallet: w, locked: a.locked, pending: a.pending,
           deposited: a.deposited, returned: a.returned,
+          unlocked: unlockedBy.get(w) || 0n,
           n: a.n, first: a.first, last: a.last,
           paid: paid.get(w) || 0n,
           cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
@@ -1429,7 +1461,7 @@
     }
     const head = $('cHead');
     if (head) head.innerHTML =
-      '<th>#</th><th>wallet</th><th>locked</th><th>share of ' + ymLabel(nowYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
+      '<th>#</th><th>wallet</th><th>locked</th><th>unlocked</th><th>share of ' + ymLabel(nowYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
       months.map(ym => {
         const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing' : ' \u00b7 next';
         return '<th>' + ymLabel(ym) + tag + '</th>';
@@ -1480,6 +1512,7 @@
           ? '<span>' + esc(shortW(r.wallet)) + ' <span class="devtag" title="earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 custodial benis it holds 4 da holders iz not counted here">dev \u00b7 custodian</span></span>'
           : '<span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>') + '</td>' +
         '<td>' + fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked)) + '</td>' +
+        '<td>' + ((r.unlocked || 0n) > 0n ? fmtAmt(toUi(r.unlocked)) : '–') + '</td>' +
         '<td>' + (poolElig[nowYm] <= 0n || eligOf(r, nowYm) <= 0n
           ? '\u2013'
           : (Number((eligOf(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
@@ -1505,6 +1538,7 @@
       ' · locked ' + fmtAmt(toUi(r.locked)) +
       (r.pending > 0n ? ' · pending ' + fmtAmt(toUi(r.pending)) : '') +
       (r.returned > 0n ? ' · returned ' + fmtAmt(toUi(r.returned)) : '') +
+      ((r.unlocked || 0n) > 0n ? ' · unlocked ' + fmtAmt(toUi(r.unlocked)) : '') +
       ((() => { const al = (r.txs || []).filter(t => t.kind === 'alloc').reduce((a, t) => a + t.amount, 0n);
         return al > 0n ? ' · ansem allocation ' + fmtAmt(toUi(al)) : ''; })()) +
       (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '') +
@@ -1521,6 +1555,7 @@
       const kind = tx.kind === 'deposit' ? 'sent 2 treasury'
         : tx.kind === 'return' ? 'returned 2 wallet'
         : tx.kind === 'alloc' ? 'ansem allocation (left da pool)'
+        : tx.kind === 'unlock' ? 'vested unlock → treasury'
         : 'revshare payout';
       const amt = tx.kind === 'payout' ? fmtSol(tx.amount) : fmtAmt(toUi(tx.amount));
       // dev deposits after round 1 r custodial \u2014 dey never earn, so dont
@@ -1552,10 +1587,10 @@
   function downloadCsv() {
     const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
     const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
-    const head = 'wallet,locked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'
+    const head = 'wallet,locked,unlocked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'
       + months.map(ym => 'paid_' + ym + '_sol,eligible_' + ym).join(',') + '\n';
     const lines = CONTRIB_ROWS.map(r => [
-      r.wallet, toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
+      r.wallet, toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked), toUi(r.unlocked || 0n), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
       r.last ? new Date(r.last * 1000).toISOString() : '',
       Number(r.paid) / 1e9, // sol
@@ -1650,7 +1685,9 @@
         || lock.perPeriod >= lock.deposited
         || (lock.end - lock.start) <= lock.period;
       if (allAtOnce) devLocked += lock.deposited;
-      else revLocked += lock.deposited;
+      // claimed tranches (withdrawn) hav physically left da vault — dont
+      // count dem as still locked or da card overstates evry month
+      else revLocked += lock.deposited > lock.withdrawn ? lock.deposited - lock.withdrawn : 0n;
     }
     $('totalLocked').textContent   = fmtAmt(toUi(stillLocked));
     $('statRevLocked').textContent = fmtAmt(toUi(revLocked));
