@@ -41,12 +41,28 @@ const STREAMFLOW_API = "https://api-public.streamflow.finance";
 // equals 1/24 of da original evry time. (da jun-29 lock's 833k june tranche
 // iz NOT here — it got re-swept in2 da round-two lock, so itz still locked
 // n draining it would double-count.)
-const VESTED_UNLOCKS: { ym: string; num: bigint; den: bigint; t: number; sig: string }[] = [
+const VESTED_UNLOCKS: { ym: string; num: bigint; den: bigint; t: number; sig: string; legs?: Record<string, bigint> }[] = [
   // benis multisig lock (jul 3 · 157,715,013 · da r1 pool): tranche 1/24 =
-  // 6,571,458.879 claimed aug 2 17:00 utc, sitting in treasury
+  // 6,571,458.879 claimed aug 2 17:00 utc. (later moved treasury → rev
+  // wallet aug 3, ~5.34m of it in2 da 8F7w time-lock — still NOT a
+  // revshare pool, so da drain stands.)
   {
     ym: "2026-07", num: 1n, den: 24n, t: 1785690008,
     sig: "4vtn8P8RbdPx2dbUeDxMwVhAC5SpzsPx8XAV1oKrhUrVngHR26oyw3cwrYPNjwd6HZ5qkgk9qUZK3bnr1KFnPyMX",
+  },
+  // vesting cycle 2 (jul-9 lock · 5,100,000): tranche 1/24 = 212,500 claimed
+  // aug 9 05:38 utc, sitting in treasury. da 2026-09 cohort spans TWO locks
+  // (jul-9 + round-two), so dis entry drains ONLY da jul-9 contributors via
+  // per-wallet `legs` (der jul-9-swept deposits — Σ legs = da lock exactly).
+  {
+    ym: "2026-09", num: 1n, den: 24n, t: 1786253927,
+    sig: "5wKMj98pxFeRzgMfZZ2eGYp94DiRGMxivjpVv6Fz7CSyDmdytkoQ3FWtmTeFxj3kanK27XeUX2vGy5p3mECfToXw",
+    legs: {
+      "FvdPuHeopuLdX3ib4MqnAhnkc8vKhMQ6zAJtHeYXWyY3": 3_000_000_000_000n,
+      "uGuTB2QsYQbJXSVBYCYmA2GtmjaAcw27q8UvWMdQ3pe": 1_000_000_000_000n,
+      "HhGwhBNHNgtSSBhzexejDGyRuvQNxeiPEEeqGUxmAkB3": 1_000_000_000_000n,
+      "AaA4XWwka8mNa1xt6qMNUmk4nUqEyQBbMN4nBnpyBdD3": 100_000_000_000n,
+    },
   },
 ];
 export const ANSEM_WALLET = "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52";
@@ -539,7 +555,6 @@ export async function runFullScan(): Promise<RevshareData> {
     candAccts.set(i.srcAddr, c);
   }
   const discoveredAccts: string[] = [];
-  const discoveredOwners = new Set<string>();
   const unknown = [...candAccts.entries()].filter(([, c]) => c.srcOwner !== TREASURY && c.srcOwner !== REVSHARE_WALLET);
   const closedMap: Record<string, boolean> = {};
   // getMultipleAccounts caps at 100 accts per call — chunk, dont truncate. a dropped
@@ -558,9 +573,15 @@ export async function runFullScan(): Promise<RevshareData> {
   }
   for (const [addr, c] of candAccts) {
     if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
-    if (closedMap[addr] && c.amount >= 10n ** BigInt(decimals) * 1000n) { // closed + sweep-sized (≥1000 tokens)
+    // closed + sweep-sized ONLY when da owner iz UNKNOWN (pruned metadata).
+    // a KNOWN non-treasury owner = somebody else's token account — adopting
+    // it makes der whole trading history look like treasury deposits.
+    // burned us aug 2026: 7yDM closed itz trading acct (BbY4y64j…) → da
+    // closed+sized branch adopted it → 873 amm fee drips became phantom
+    // "contributors" (8eixuojQ 76.9m!) n fee sweeps 2 dev became fake
+    // sweep events dat re-timed real holders' cohorts.
+    if (!c.srcOwner && closedMap[addr] && c.amount >= 10n ** BigInt(decimals) * 1000n) {
       discoveredAccts.push(addr);
-      if (c.srcOwner) discoveredOwners.add(c.srcOwner);
     }
   }
 
@@ -668,18 +689,29 @@ export async function runFullScan(): Promise<RevshareData> {
       if (e.t && (!a.first || e.t < a.first)) a.first = e.t;
       if (e.t > a.last) a.last = e.t;
     } else if (e.type === "vest") {
-      // claimed tranche drains dat cohort pro-rata AT CLAIM TIME — later
-      // returns replay against da post-drain balance (true chain order)
+      // claimed tranche drains dat cohort AT CLAIM TIME — later returns
+      // replay against da post-drain balance (true chain order). wit `legs`
+      // only dose wallets drain (fraction of der leg, clamped) — used when
+      // a cohort ym spans multiple locks n only one lock vested.
       const u = VESTED_UNLOCKS[e.vestIdx!];
-      for (const [w, a] of agg.entries()) {
+      const drain = (w: string, a: Agg, basis: bigint) => {
         const c = a.cohorts[u.ym] || 0n;
-        const take = (c * u.num) / u.den;
-        if (take <= 0n) continue;
+        let take = (basis * u.num) / u.den;
+        if (take > c) take = c;
+        if (take <= 0n) return;
         a.cohorts[u.ym] = c - take;
         if (a.cohorts[u.ym] === 0n) delete a.cohorts[u.ym];
         a.locked -= take;
         unlockedBy.set(w, (unlockedBy.get(w) || 0n) + take);
         vestTakes.push({ w, take, t: u.t, sig: u.sig });
+      };
+      if (u.legs) {
+        for (const [w, leg] of Object.entries(u.legs)) {
+          const a = agg.get(w);
+          if (a) drain(w, a, leg);
+        }
+      } else {
+        for (const [w, a] of agg.entries()) drain(w, a, a.cohorts[u.ym] || 0n);
       }
     } else if (e.type === "sweep") {
       // pending → locked, tagged wit da payout month dis sweep qualifies for.

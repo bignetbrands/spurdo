@@ -4,8 +4,8 @@ da ebin bear from 2008 haz arriv on solana :DDD
 
 This repo holds two things:
 
-1. **Landing page** at `spurdosparde.fun` — the original static `index.html` (now in `public/landing.html`)
-2. **Bot system** at `spurdosparde.fun/bot` — autonomous X account management for `@spurdo`
+1. **Landing page** at `spurdo.app` — the original static `index.html` (now in `public/landing.html`)
+2. **Bot system** at `spurdo.app/bot` — autonomous X account management for `@spurdo`
 
 ## Architecture
 

@@ -727,6 +727,15 @@
   const VESTED_UNLOCKS = [
     { ym: '2026-07', num: 1n, den: 24n, t: 1785690008,
       sig: '4vtn8P8RbdPx2dbUeDxMwVhAC5SpzsPx8XAV1oKrhUrVngHR26oyw3cwrYPNjwd6HZ5qkgk9qUZK3bnr1KFnPyMX' },
+    // vc2 (jul-9 lock) tranche 1 — legs cuz 2026-09 spans two locks
+    { ym: '2026-09', num: 1n, den: 24n, t: 1786253927,
+      sig: '5wKMj98pxFeRzgMfZZ2eGYp94DiRGMxivjpVv6Fz7CSyDmdytkoQ3FWtmTeFxj3kanK27XeUX2vGy5p3mECfToXw',
+      legs: {
+        'FvdPuHeopuLdX3ib4MqnAhnkc8vKhMQ6zAJtHeYXWyY3': 3000000000000n,
+        'uGuTB2QsYQbJXSVBYCYmA2GtmjaAcw27q8UvWMdQ3pe': 1000000000000n,
+        'HhGwhBNHNgtSSBhzexejDGyRuvQNxeiPEEeqGUxmAkB3': 1000000000000n,
+        'AaA4XWwka8mNa1xt6qMNUmk4nUqEyQBbMN4nBnpyBdD3': 100000000000n,
+      } },
   ];
   const ANSEM_ALLOC_SIG = '2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy';
   const ANSEM_ALLOC_T = 1782016214; // 2026-06-21 04:30:14 utc
@@ -1310,15 +1319,21 @@
           if (e.t > a.last) a.last = e.t;
         } else if (e.type === 'vest') {
           const u = VESTED_UNLOCKS[e.vestIdx];
-          for (const [w, a] of agg.entries()) {
+          const drain = (w, a, basis) => {
             const c = a.cohorts[u.ym] || 0n;
-            const take = (c * u.num) / u.den;
-            if (take <= 0n) continue;
+            let take = (basis * u.num) / u.den;
+            if (take > c) take = c;
+            if (take <= 0n) return;
             a.cohorts[u.ym] = c - take;
             if (a.cohorts[u.ym] === 0n) delete a.cohorts[u.ym];
             a.locked -= take;
             unlockedBy.set(w, (unlockedBy.get(w) || 0n) + take);
             vestTakes.push({ w, take, t: u.t, sig: u.sig });
+          };
+          if (u.legs) {
+            for (const [w, leg] of Object.entries(u.legs)) { const a = agg.get(w); if (a) drain(w, a, leg); }
+          } else {
+            for (const [w, a] of agg.entries()) drain(w, a, a.cohorts[u.ym] || 0n);
           }
         } else if (e.type === 'sweep') {
           // cohort = first calendar month da money iz locked for from da start,
@@ -1453,6 +1468,10 @@
     const paidTotals = {};
     for (const r of rows) for (const k of Object.keys(r.paidByMonth || {}))
       paidTotals[k] = (paidTotals[k] || 0n) + r.paidByMonth[k];
+    // once dis month's payout haz landed, da sheet rolls forward: da share
+    // column n da ~sol projections track da NEXT cycle, computed on da pot
+    // so far (da rev wallet refills wit creator fees until da 1st)
+    const activeYm = paidTotals[nowYm] > 0n ? ymAdd(nowYm, 1) : nowYm;
     const poolElig = {};
     for (const ym of months) {
       let sum = 0n;
@@ -1461,9 +1480,10 @@
     }
     const head = $('cHead');
     if (head) head.innerHTML =
-      '<th>#</th><th>wallet</th><th>locked</th><th>unlocked</th><th>share of ' + ymLabel(nowYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
+      '<th>#</th><th>wallet</th><th>locked</th><th>unlocked</th><th>share of ' + ymLabel(activeYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
       months.map(ym => {
-        const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing' : ' \u00b7 next';
+        const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing'
+          : ym === activeYm ? ' \u00b7 next \u00b7 pot filling' : ' \u00b7 next';
         return '<th>' + ymLabel(ym) + tag + '</th>';
       }).join('');
     // cutoff for payout month E = swept on/b4 da 1st of E-1 (a day-1 sweep
@@ -1498,6 +1518,11 @@
         const tag = paidTotals[ym] > 0n ? ' <span class="base">payout in progress</span>' : '';
         return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base + tag;
       }
+      // next cycle once dis month iz paid: project on da pot so far —
+      // da number grows as creator fees land until da 1st
+      if (ym === activeYm && REV_SOL > 0n) {
+        return '~' + fmtSol((REV_SOL * elig) / poolElig[ym]) + base + ' <span class="base">pot so far</span>';
+      }
       // future cycle: pot unknown — show da wallet's share of dat pool
       return (Number((elig * 10000n) / poolElig[ym]) / 100).toFixed(2) + '%' + base;
     };
@@ -1513,9 +1538,9 @@
           : '<span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>') + '</td>' +
         '<td>' + fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked)) + '</td>' +
         '<td>' + ((r.unlocked || 0n) > 0n ? fmtAmt(toUi(r.unlocked)) : '–') + '</td>' +
-        '<td>' + (poolElig[nowYm] <= 0n || eligOf(r, nowYm) <= 0n
+        '<td>' + (poolElig[activeYm] <= 0n || eligOf(r, activeYm) <= 0n
           ? '\u2013'
-          : (Number((eligOf(r, nowYm) * 10000n) / poolElig[nowYm]) / 100).toFixed(2) + '%') + '</td>' +
+          : (Number((eligOf(r, activeYm) * 10000n) / poolElig[activeYm]) / 100).toFixed(2) + '%') + '</td>' +
         '<td>' + (r.pending > 0n ? fmtAmt(toUi(r.pending)) : '\u2013') + '</td>' +
         '<td>' + (r.returned > 0n ? fmtAmt(toUi(r.returned)) : '\u2013') + '</td>' +
         '<td>' + fmtDate(r.last) + '</td>' +
@@ -1587,8 +1612,17 @@
   function downloadCsv() {
     const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
     const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
+    // da transfer list 4 da next payout: once dis month iz paid, project
+    // each wallet's next-cycle sol on da pot so far (same math as da page)
+    const paidT = {};
+    for (const r of CONTRIB_ROWS) for (const k of Object.keys(r.paidByMonth || {}))
+      paidT[k] = (paidT[k] || 0n) + r.paidByMonth[k];
+    const activeYm = paidT[nowYm] > 0n ? ymAdd(nowYm, 1) : nowYm;
+    let actPool = 0n;
+    for (const r of CONTRIB_ROWS) actPool += eligOf(r, activeYm);
     const head = 'wallet,locked,unlocked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'
-      + months.map(ym => 'paid_' + ym + '_sol,eligible_' + ym).join(',') + '\n';
+      + months.map(ym => 'paid_' + ym + '_sol,eligible_' + ym).join(',')
+      + ',projected_' + activeYm + '_sol_on_current_pot\n';
     const lines = CONTRIB_ROWS.map(r => [
       r.wallet, toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked), toUi(r.unlocked || 0n), r.pct.toFixed(4), toUi(r.pending), toUi(r.deposited), toUi(r.returned),
       r.first ? new Date(r.first * 1000).toISOString() : '',
@@ -1598,6 +1632,7 @@
         Number((r.paidByMonth || {})[ym] || 0n) / 1e9,
         toUi(eligOf(r, ym)),
       ]),
+      actPool > 0n ? Number((REV_SOL * eligOf(r, activeYm)) / actPool) / 1e9 : 0,
     ].join(','));
     const blob = new Blob([head + lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');

@@ -159,7 +159,7 @@ async function scrapeMemedepot(): Promise<{ cfAccountId: string; ids: string[] }
   const url = `https://memedepot.com/d/${slug}`;
 
   const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; SpurdoBot/1.0; +https://spurdosparde.fun)" },
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; SpurdoBot/1.0; +https://spurdo.app)" },
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`memedepot fetch failed: HTTP ${res.status} for ${url}`);
