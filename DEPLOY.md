@@ -1,6 +1,6 @@
 # Deploy Guide
 
-End-to-end setup for `spurdosparde.fun`. Allow ~30 minutes for first deploy.
+End-to-end setup for `spurdo.app`. Allow ~30 minutes for first deploy.
 
 ## What you'll need
 
@@ -9,7 +9,7 @@ End-to-end setup for `spurdosparde.fun`. Allow ~30 minutes for first deploy.
 - An Anthropic API key
 - An OpenAI API key (with org verified for gpt-image-1)
 - X API credentials (Basic tier, ~$200/mo) — 5 keys
-- Your domain `spurdosparde.fun` (already yours)
+- Your domain `spurdo.app` (already yours)
 
 ## 1. Push the code to Vercel
 
@@ -97,11 +97,11 @@ After adding env vars, hit **Deployments → ⋯ → Redeploy** on the latest de
 ## 5. Connect the domain
 
 1. **Settings → Domains**
-2. Add `spurdosparde.fun`
+2. Add `spurdo.app`
 3. Vercel will give you DNS records — add them at your registrar
 4. Wait ~5 minutes for propagation
-5. Visit `https://spurdosparde.fun` — should show the landing page
-6. Visit `https://spurdosparde.fun/bot` — should show the auth gate
+5. Visit `https://spurdo.app` — should show the landing page
+6. Visit `https://spurdo.app/bot` — should show the auth gate
 
 ## 6. Verify the M1 setup
 
@@ -119,10 +119,10 @@ The cron stubs will start firing every 5 / 30 minutes but currently return 501 (
 ## 7. Test the cron auth (optional)
 
 ```bash
-curl -i https://spurdosparde.fun/api/cron/tweet
+curl -i https://spurdo.app/api/cron/tweet
 # should return: 401 Unauthorized
 
-curl -i -H "Authorization: Bearer YOUR_CRON_SECRET" https://spurdosparde.fun/api/cron/tweet
+curl -i -H "Authorization: Bearer YOUR_CRON_SECRET" https://spurdo.app/api/cron/tweet
 # should return: 501 with M1 stub message
 ```
 

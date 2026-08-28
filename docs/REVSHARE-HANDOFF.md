@@ -103,8 +103,19 @@ deez r product decisions, not bugs. dont "fix" dem:
    den 23n, den 22n, etc (each equals 1/24 of original). da jun-29
    lock's june tranche (833k) iz NOT listed — it wuz re-swept in2 da
    round-two lock so it never stopped being locked. WHEN A TRANCHE GETS
-   RE-LOCKED: remove or offset itz entry, or holders lose basis on
-   money dat went back in2 streamflow. drains splice IN2 da event
+   RE-LOCKED in2 a REVSHARE POOL lock: remove or offset itz entry, or
+   holders lose basis on money dat went back in2 streamflow.
+   **`legs`**: when a cohort ym spans MULTIPLE locks (2026-09 = jul-9
+   lock + round-two lock), a plain pro-rata drain would tax da wrong
+   holders — give da entry a `legs` map (wallet → itz swept amount in
+   DAT lock, Σ legs = da lock) n only dose wallets drain
+   floor(leg×num/den). second entry (aug 9): vc2 tranche 1, 212,500 =
+   5,100,000/24, legs FvdP 3m · uGuT 1m · HhGw 1m · AaA4 100k.
+   post-claim custody moves seen on-chain (aug 2026): da benis tranche
+   went treasury → REV WALLET aug 3 (internal — engine ignores it) n
+   ~5.34m of it in2 da new 8F7w TIME-based lock aug 7. neither iz a
+   revshare pool, so da drains stand. purpose of 8F7w unconfirmed by
+   ism — ask b4 treating it as anything but dev custody. drains splice IN2 da event
    timeline at claim time, so returns after a claim replay against da
    post-drain balance (a fully-exited wallet ends at locked 0, no
    phantom basis). NOTE: da csv's eligible_YM columns r CURRENT basis
