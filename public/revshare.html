@@ -552,11 +552,15 @@
   const TREASURY           = 'ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd'; // benis multisig — contributors deposit here
   const DEV_WALLET         = 'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV'; // moves treasury benis into streamflow locks
   const REVSHARE_WALLET    = 'Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ'; // pays monthly revshare out
-  const LOCK_SENDERS       = [DEV_WALLET, TREASURY];                          // api fallback filters
-  const INTERNAL_WALLETS   = [TREASURY, DEV_WALLET, REVSHARE_WALLET];         // not contributors
+  // G9ia = OLD dev wallet, stays da ledger's dev identity. 6y5a = NEW dev
+  // wallet: signs future locks, receives dev's rev share + unlocks.
+  const NEW_DEV_WALLET     = '6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y';
+  const LOCK_SENDERS       = [DEV_WALLET, NEW_DEV_WALLET, TREASURY];          // api fallback filters
+  const INTERNAL_WALLETS   = [TREASURY, DEV_WALLET, NEW_DEV_WALLET, REVSHARE_WALLET]; // not contributors
   // payout routed thru an exchange deposit addr → real locker (multisig payout sheet)
   const PAYOUT_PROXIES = {
     '3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc': 'Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp',
+    '6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y': 'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV', // new dev → dev row
   };
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAMFLOW_API     = 'https://api-public.streamflow.finance';
@@ -1264,7 +1268,7 @@
       }
 
       // per-wallet tx ledger 4 da holder modal — same filters as da accounting
-      const sweepTimes = tre.outs.filter(o => o.destOwner === DEV_WALLET).map(o => o.time || 0).sort((a, b) => a - b);
+      const sweepTimes = tre.outs.filter(o => o.destOwner === DEV_WALLET || o.destOwner === NEW_DEV_WALLET).map(o => o.time || 0).sort((a, b) => a - b);
       const cohortOfDep = (t) => {
         const sw = sweepTimes.find(x => x >= t);
         return sw !== undefined
@@ -1299,7 +1303,7 @@
       }
       let sent2dev = 0n;
       for (const o of tre.outs) {
-        if (o.destOwner === DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: 'sweep' }); }
+        if (o.destOwner === DEV_WALLET || o.destOwner === NEW_DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: 'sweep' }); }
         else if (o.destOwner && !internal.has(o.destOwner)) events.push({ t: o.time || 0, ord: 2, type: 'ret', w: o.destOwner, amt: o.amount });
       }
       // vest events splice in at claim time — returns after a claim must
@@ -1533,9 +1537,10 @@
       if (r.role === 'dev') tr.className = 'devrow';
       tr.innerHTML =
         '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
-        '<td>' + (r.role === 'dev'
-          ? '<span>' + esc(shortW(r.wallet)) + ' <span class="devtag" title="earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 custodial benis it holds 4 da holders iz not counted here">dev \u00b7 custodian</span></span>'
-          : '<span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>') + '</td>' +
+        '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>' +
+          (r.role === 'dev'
+          ? ' <span class="devtag" title="dis iz da OLD dev wallet \u2014 itz stakes n history live here, but rev share n unlocks now pay out 2 da new dev wallet ' + shortW(NEW_DEV_WALLET) + ' (credited 2 dis row). earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 custodial benis it holds 4 da holders iz not counted here">old dev \u00b7 custodian</span>'
+          : '') + '</td>' +
         '<td>' + fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked)) + '</td>' +
         '<td>' + ((r.unlocked || 0n) > 0n ? fmtAmt(toUi(r.unlocked)) : '–') + '</td>' +
         '<td>' + (poolElig[activeYm] <= 0n || eligOf(r, activeYm) <= 0n

@@ -46,14 +46,23 @@ deez r product decisions, not bugs. dont "fix" dem:
      aug → first pays sep 1 (cohort 2026-09).
    evryting ELSE dev deposited after round 1 iz custodial — pooled holder
    tokens passing thru 4 locking — n NEVER earns. dev also signs da
-   time-based "dev lock"s. its row renders pinned last wit da "dev ·
-   custodian" tag, its holding column shows ONLY da own-stakes total
+   time-based "dev lock"s. its row renders pinned last wit da "old dev ·
+   custodian" tag, clickable like any holder (receipts popup restored per
+   ism aug 2026), n its holding column shows ONLY da own-stakes total
    (7,365,272 + 3,461,005.205545 = 10,826,277.58 — NOT da custodial benis
-   it also holds), n it haz NO receipts popup (per ism) — da evidence
-   lives in da month-cell tooltips n da devtag tooltip. NOTE: da scan cannot see dev unlocks either (escrow →
+   it also holds). NOTE: da scan cannot see dev unlocks either (escrow →
    dev never touches treasury), so both stakes r fixed by DATE/amount, not
    live balance — if a dev stake ever leaves streamflow, or dev adds a NEW
    genuine stake, edit `DEV_EXTRA_STAKES`/`DEV_R1_YM` by hand.
+   **DEV WALLET MIGRATION (aug 2026, ism):** G9ia iz da OLD dev wallet —
+   it stays da ledger's dev identity (row · stakes · history). da NEW dev
+   wallet `6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y` signs future
+   locks n receives dev's rev share + unlocks from now on: treasury →
+   new-dev = sweep (cohort timing included), SOL payouts 2 it credit da
+   dev row via `PAYOUT_PROXIES`, n it iz internal — never itz own
+   contributor row. if da NEW wallet ever makes a GENUINE stake of itz
+   own, dat needs a fresh ism decision — dont just add it 2
+   `DEV_EXTRA_STAKES`.
 
 2. **cohort rule** (reverse-engineered from round 1, verified 2 da lamport):
    money earns da first calendar month itz locked for FROM DA START, paid on

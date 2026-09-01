@@ -53,11 +53,20 @@ tokTxs.depEscrow = { time: TS("2026-07-29T13:00:00Z"), srcAcct: ESCROW, srcOwner
 const D = "DDDDwa11et11111111111111111111111111111111d";
 tokTxs.depD = { time: TS("2026-04-26T12:00:00Z"), srcAcct: "dATA", srcOwner: D, dstAcct: TRE_ATA, dstOwner: TREASURY, amt: "240000" };
 tokTxs.retD = { time: TS("2026-08-03T12:00:00Z"), srcAcct: TRE_ATA, srcOwner: TREASURY, dstAcct: "dATA", dstOwner: D, amt: "230000" };
+// NEW dev wallet era (aug 2026): treasury → new-dev iz a SWEEP, payouts 2
+// new-dev credit da (old-)dev row, n new-dev never gets itz own row.
+// E deposits aug 10 → swept 2 NEW dev aug 20 (mid-month) → 2026-10 cohort.
+const NEWDEV = "6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y";
+const NEWDEV_ATA = "newdevATA111111111111111111111111111111111x";
+const E = "EEEEwa11et11111111111111111111111111111111e";
+tokTxs.depE = { time: TS("2026-08-10T12:00:00Z"), srcAcct: "eATA", srcOwner: E, dstAcct: TRE_ATA, dstOwner: TREASURY, amt: "100000" };
+tokTxs.sweep5 = { time: TS("2026-08-20T12:00:00Z"), srcAcct: TRE_ATA, srcOwner: TREASURY, dstAcct: NEWDEV_ATA, dstOwner: NEWDEV, amt: "100000" };
 
 // SOL payout jul 1 → A only (mirrors round 1: only da may-swept cohort got paid)
 const solTxs = [
   { time: TS("2026-07-01T12:00:00Z"), dest: A, lamports: 5_000_000_000 },
   { time: TS("2026-07-01T12:05:00Z"), dest: DEV, lamports: 1_000_000_000 }, // round-1 dev payout
+  { time: TS("2026-08-02T19:00:00Z"), dest: NEWDEV, lamports: 500_000_000 }, // aug payout 2 da NEW dev wallet
 ];
 
 function mkTok(t: TokTx) {
@@ -178,7 +187,7 @@ check("dev locked = 1,916,667 after alloc + vest (Σcohorts still === locked)", 
 const allocTx = dv && dv.txs.find((x: any) => x.kind === "alloc");
 check("dev ledger haz alloc tx: 5m wit da real ansem sig", !!allocTx && Mn(allocTx.amount) === 5 && allocTx.sig.startsWith("2L3kc9pa2mu"), allocTx);
 check("dev pct = 0", dv?.pct === 0);
-check("pool EXCLUDES dev (40,583,334 holders, post-vest)", d.pool === 40_583_334n, d.pool);
+check("pool EXCLUDES dev (40,683,334 holders: post-vest + E 100k)", d.pool === 40_683_334n, d.pool);
 // da render rule (eligOf in revshare.html): dev earns ONLY on itz own genuine
 // stakes — r1 chain cohorts (≤ DEV_R1_YM) + da attested jul-31 own stake.
 // custodial deposits after r1 never earn, holders unchanged.
@@ -204,6 +213,11 @@ const dr = row(D);
 check("D (exited after claim): locked 0, no cohorts — no phantom basis", dr.locked === 0n && Object.keys(dr.cohorts).length === 0, dr.cohorts);
 check("D unlocked 10,000 · returned 230,000 (deposited 240,000 fully reconciles)", dr.unlocked === 10_000n && dr.returned === 230_000n && dr.deposited === 240_000n, { u: dr.unlocked, r: dr.returned });
 check("D ledger order: return · unlock · deposit (newest first)", dr.txs.map((x: any) => x.kind).join(",") === "return,unlock,deposit", dr.txs.map((x: any) => x.kind));
+
+// ── new dev wallet era ──
+check("treasury → NEW dev iz a sweep: E's aug-10 dep → 2026-10 cohort", row(E).cohorts["2026-10"] === 100_000n && row(E).locked === 100_000n, row(E).cohorts);
+check("payout 2 NEW dev credits da dev row (aug 0.5 SOL)", dv && Number(dv.paidByMonth["2026-08"] || 0n) / 1e9 === 0.5, dv && dv.paidByMonth);
+check("NEW dev wallet never gets itz own row", !d.contribRows.find((r) => r.wallet === NEWDEV), d.contribRows.map((r) => r.wallet.slice(0, 6)));
 
 // emit payload 4 da render harness
 const { jstr } = await import("../src/lib/revshare-scan.ts");
