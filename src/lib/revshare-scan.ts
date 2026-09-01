@@ -29,8 +29,8 @@ const INTERNAL_WALLETS = [TREASURY, DEV_WALLET, NEW_DEV_WALLET, REVSHARE_WALLET]
 const PAYOUT_PROXIES: Record<string, string> = {
   // changenow deposit addr used for da jul 1 2026 (round 1) payout 2 da top locker
   "3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc": "Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp",
-  // dev's rev share now pays out 2 da NEW dev wallet — credit da dev row
-  [NEW_DEV_WALLET]: DEV_WALLET,
+  // (no proxy 4 da new dev wallet — it haz itz OWN row now, role "dev2",
+  //  so payouts 2 it land visibly on dat row from da handover cycle on)
 };
 const STREAMFLOW_PROGRAM = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m";
 const STREAMFLOW_API = "https://api-public.streamflow.finance";
@@ -475,7 +475,8 @@ export type ContribRow = {
    *  chain-derived 7,365,272) + DEV_EXTRA_STAKES (jul-31 lock own portion,
    *  ism-attested — never passed thru treasury so unscannable). deposits
    *  after round 1 r custodial n never earn. policy: HANDOFF item 1. */
-  role?: "dev";
+  role?: "dev" | "dev2"; // dev2 = da NEW dev wallet's row: receives da dev
+  // share from DEV_HANDOVER (sep 2026) onward; stakes/history stay on "dev"
 };
 
 export type ContribTx = {
@@ -555,8 +556,11 @@ export async function runFullScan(): Promise<RevshareData> {
   // contributor scan wit dev-side discovery
   const nodeStats: NodeStat[] = [];
   const dev = await scanWallet(DEV_WALLET, nodeStats, undefined, true); // inflow discovery only needs da atas
+  // da NEW dev wallet receives sweeps from aug 2026 on — walk itz inflows
+  // too, or treasury accts rotated in da new era can never be rediscovered
+  const dev2scan = await scanWallet(NEW_DEV_WALLET, nodeStats, undefined, true);
   const candAccts = new Map<string, { srcOwner?: string; amount: bigint }>();
-  for (const i of dev.ins) {
+  for (const i of [...dev.ins, ...dev2scan.ins]) {
     if (!i.srcAddr) continue;
     const c = candAccts.get(i.srcAddr) || { srcOwner: i.srcOwner, amount: 0n };
     c.amount += i.amount;
@@ -804,26 +808,32 @@ export async function runFullScan(): Promise<RevshareData> {
 
   let pool = 0n, pendingTotal = 0n;
   for (const [w, a] of agg.entries()) {
-    if (w === DEV_WALLET) continue; // custodian — never in da holder pool
+    if (w === DEV_WALLET || w === NEW_DEV_WALLET) continue; // custodians — never in da holder pool
     pool += a.locked; pendingTotal += a.pending;
   }
+  // da new dev wallet gets a row even wit zero deposits — it receives da
+  // dev share from da handover cycle on, n dat should be VISIBLE
+  get(NEW_DEV_WALLET);
+  const devRole = (w: string) =>
+    w === DEV_WALLET ? ({ role: "dev" as const }) : w === NEW_DEV_WALLET ? ({ role: "dev2" as const }) : {};
   const contribRows: ContribRow[] = [...agg.entries()]
     // evry wallet dat ever sent 2 da treasury gets a row — incl fully-refunded ones
     // (locked 0 · pending 0 · returned = all of it). da returned column iz da proof
     // dey got it back. share% iz locked-only so a refunded wallet reads 0% = no payout.
-    .filter(([, a]) => a.deposited > 0n)
+    .filter(([w, a]) => a.deposited > 0n || w === NEW_DEV_WALLET)
     .map(([w, a]) => ({
       wallet: w, locked: a.locked, pending: a.pending, deposited: a.deposited, returned: a.returned,
       unlocked: unlockedBy.get(w) || 0n,
       n: a.n, first: a.first, last: a.last, paid: paid.get(w) || 0n,
       cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
       txs: (txsByWallet.get(w) || []).slice(0, 60), // newest 60 — payload bound
-      pct: w === DEV_WALLET || pool <= 0n ? 0 : Number((a.locked * 10000n) / pool) / 100,
-      ...(w === DEV_WALLET ? { role: "dev" as const } : {}),
+      pct: w === DEV_WALLET || w === NEW_DEV_WALLET || pool <= 0n ? 0 : Number((a.locked * 10000n) / pool) / 100,
+      ...devRole(w),
     }))
     .sort((x, y) => {
-      if (x.role === "dev") return 1;   // custodian row pinned last
-      if (y.role === "dev") return -1;
+      // custodian rows pinned last: old dev, den da new dev
+      const rank = (r: { role?: string }) => (r.role === "dev" ? 1 : r.role === "dev2" ? 2 : 0);
+      if (rank(x) !== rank(y)) return rank(x) - rank(y);
       return y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : y.pending > x.pending ? 1 : -1;
     });
 
