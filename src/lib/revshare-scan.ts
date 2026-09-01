@@ -557,8 +557,12 @@ export async function runFullScan(): Promise<RevshareData> {
   const nodeStats: NodeStat[] = [];
   const dev = await scanWallet(DEV_WALLET, nodeStats, undefined, true); // inflow discovery only needs da atas
   // da NEW dev wallet receives sweeps from aug 2026 on — walk itz inflows
-  // too, or treasury accts rotated in da new era can never be rediscovered
-  const dev2scan = await scanWallet(NEW_DEV_WALLET, nodeStats, undefined, true);
+  // too, or treasury accts rotated in da new era can never be rediscovered.
+  // BEST-EFFORT: dis feeds discovery candidates only, so a hiccup here must
+  // never kill da whole scan (burned us sep 1: a transient sig-fetch fail on
+  // da brand-new wallet's acct 502'd da scan on payout day)
+  const dev2scan = await scanWallet(NEW_DEV_WALLET, nodeStats, undefined, true)
+    .catch(() => ({ ins: [] as typeof dev.ins }));
   const candAccts = new Map<string, { srcOwner?: string; amount: bigint }>();
   for (const i of [...dev.ins, ...dev2scan.ins]) {
     if (!i.srcAddr) continue;

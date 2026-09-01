@@ -1186,7 +1186,8 @@
 
       // 1) da dev wallets received da sweeps — der inflow sources ARE da historical treasury accounts
       const dev = await scanWallet(DEV_WALLET, 'dev wallet', onP, undefined, true);
-      const dev2scan = await scanWallet(NEW_DEV_WALLET, 'new dev wallet', onP, undefined, true);
+      const dev2scan = await scanWallet(NEW_DEV_WALLET, 'new dev wallet', onP, undefined, true)
+        .catch(() => ({ ins: [] })); // best-effort — discovery candidates only, never kills da scan
       const candAccts = new Map(); // srcAddr -> {srcOwner, amount}
       for (const i of [...dev.ins, ...dev2scan.ins]) {
         if (!i.srcAddr) continue;
