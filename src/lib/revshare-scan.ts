@@ -16,13 +16,21 @@
 export const MINT = "991L48va9rMiysu3fCpeg5p9bN4NLzhujojzmFtkgacE";
 export const TREASURY = "ByXqkMujMBCgCbWsjJ1EreVKfT3PTZYy9MMxNRu58Smd";
 export const DEV_WALLET = "G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV";
+// da dev moved wallets (aug 2026): G9ia iz da OLD dev wallet — it stays da
+// ledger's dev identity (row, stakes, history). da NEW wallet signs future
+// locks n receives dev's rev share + unlocks. treasury → new-dev = sweep,
+// payouts 2 it credit da dev row (PAYOUT_PROXIES), n it never gets itz own
+// contributor row (internal).
+export const NEW_DEV_WALLET = "6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y";
 export const REVSHARE_WALLET = "Gf9QUuqfEX8K3WFgfF4J1SXtM2Za1LZwitByNFqgtgtQ";
-const INTERNAL_WALLETS = [TREASURY, DEV_WALLET, REVSHARE_WALLET];
+const INTERNAL_WALLETS = [TREASURY, DEV_WALLET, NEW_DEV_WALLET, REVSHARE_WALLET];
 // payouts routed thru an exchange deposit address — on-chain dest iz da exchange,
 // da real recipient iz documented off-chain (multisig payout sheet). map dest → locker.
 const PAYOUT_PROXIES: Record<string, string> = {
   // changenow deposit addr used for da jul 1 2026 (round 1) payout 2 da top locker
   "3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc": "Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp",
+  // dev's rev share now pays out 2 da NEW dev wallet — credit da dev row
+  [NEW_DEV_WALLET]: DEV_WALLET,
 };
 const STREAMFLOW_PROGRAM = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m";
 const STREAMFLOW_API = "https://api-public.streamflow.finance";
@@ -417,7 +425,7 @@ async function fetchLocksRpc(): Promise<Lock[]> {
 async function fetchLocksApi(): Promise<Lock[]> {
   const base = STREAMFLOW_API + "/v2/api/contracts/tabularium/?";
   const urls: string[] = [];
-  for (const w of [DEV_WALLET, TREASURY]) {
+  for (const w of [DEV_WALLET, NEW_DEV_WALLET, TREASURY]) {
     urls.push(base + "sender=" + encodeURIComponent(w));
     urls.push(base + "recipient=" + encodeURIComponent(w));
   }
@@ -657,7 +665,7 @@ export async function runFullScan(): Promise<RevshareData> {
   }
   let sent2dev = 0n;
   for (const o of tre.outs) {
-    if (o.destOwner === DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: "sweep" }); }
+    if (o.destOwner === DEV_WALLET || o.destOwner === NEW_DEV_WALLET) { sent2dev += o.amount; events.push({ t: o.time || 0, ord: 1, type: "sweep" }); }
     else if (o.destOwner && !internal.has(o.destOwner)) events.push({ t: o.time || 0, ord: 2, type: "ret", w: o.destOwner, amt: o.amount });
   }
   // vest events splice in2 da timeline at der real claim time — a return
@@ -748,7 +756,7 @@ export async function runFullScan(): Promise<RevshareData> {
   // per-wallet tx ledger — same filters as da accounting (internal + escrow
   // excluded), so da modal always reconciles wit da row it supports.
   const sweepTimes = tre.outs
-    .filter((o) => o.destOwner === DEV_WALLET)
+    .filter((o) => o.destOwner === DEV_WALLET || o.destOwner === NEW_DEV_WALLET)
     .map((o) => o.time || 0)
     .sort((a, b) => a - b);
   const cohortOfDep = (t: number): string | undefined => {
