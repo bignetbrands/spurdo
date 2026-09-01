@@ -72,6 +72,32 @@ const VESTED_UNLOCKS: { ym: string; num: bigint; den: bigint; t: number; sig: st
       "AaA4XWwka8mNa1xt6qMNUmk4nUqEyQBbMN4nBnpyBdD3": 100_000_000_000n,
     },
   },
+  // jun-29 lock tranche 2 (aug 28 23:31 utc): 833,363.2 = 20,000,716.8/24
+  // claimed n KEPT in treasury (tranche 1 wuz re-locked in2 round-two, so
+  // dis iz da lock's first drained tranche). da lock backs FvdP's 20m aug
+  // cohort (+716.8 dust, unattributed).
+  {
+    ym: "2026-08", num: 1n, den: 24n, t: 1787959874,
+    sig: "jweK8XPXB3Tvr3oekWvut6Wc7vUM1hUGNgNLNU9rkwJi93TGg8XFnEjitPS4X7BTBtRceFANvuRLPt2AhPGdbwp",
+    legs: { "FvdPuHeopuLdX3ib4MqnAhnkc8vKhMQ6zAJtHeYXWyY3": 20_000_000_000_000n },
+  },
+  // round-two lock tranche 1 (sep 1 00:33 utc): 2,265,240.118 = 54,365,762.8/24
+  // claimed n kept in treasury. legs = da aug-1-swept holder deposits
+  // (Σ 50,164,022.6; da sweep's remaining 833,363.2 wuz FvdP's re-locked
+  // jun-29 tranche — itz tiny vest share stays unattributed dust).
+  {
+    ym: "2026-09", num: 1n, den: 24n, t: 1788222835,
+    sig: "HmhaEonmKap43hbnUc3EqbY4Cm7eXmZzPd7SdPguUP9Cxu2EY3A7c6bFoo4JEycPFJBrn7qggkgTjE3eQ6oFGsm",
+    legs: {
+      "FvdPuHeopuLdX3ib4MqnAhnkc8vKhMQ6zAJtHeYXWyY3": 32_000_000_000_000n,
+      "4NgTJwCnHT8RnvrUthfo3UsLASjArkogLF3KHMxNfrNU": 5_000_000_000_000n,
+      "7yDMgrdZaFGegFBEeA6iRjKQPW1N8z9rFhwZv1pFZ4h9": 1_000_000_000_000n,
+      "CXKdmp7saveMZ2sV4SSm4Xzrq526gZA1Wf8YbUkKB2qk": 5_000_000_000_000n,
+      "AyVZHfpVYCGifwWBEGJwpS6h5sQ5rHH33Kxq127S9m8b": 4_964_022_622_131n,
+      "7WQbCmCj8GzMU6uiCRVBYMgaMHNDHGqLKWhvjsSDDLrw": 2_000_000_000_000n,
+      "DWxKRnmo2DEsnkKmidUCkVLRJxuQp9V1KvskWe8xPC7x": 200_000_000_000n,
+    },
+  },
 ];
 export const ANSEM_WALLET = "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52";
 const ANSEM_ALLOC_SIG = "2L3kc9pa2muKWXS1PKm1iFQp9dU5seoj2ZzGKhFnhKFFAg96Qe7mcCA9t3F4Yk7vm6GC2Q115JwcaYwijEryLcjy";
