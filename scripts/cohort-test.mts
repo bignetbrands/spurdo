@@ -178,7 +178,7 @@ check("no wallet's ledger contains da escrow tx", d.contribRows.every(r => r.txs
 
 // ── dev custodian row ──
 const dv = d.contribRows.find((r) => r.wallet === DEV);
-check("dev row exists wit role=dev, pinned LAST", !!dv && dv.role === "dev" && d.contribRows[d.contribRows.length - 1].wallet === DEV, d.contribRows.map(r => r.wallet.slice(0,4)+(r.role?":"+r.role:"")));
+check("old dev row role=dev, pinned second-last; dev2 row LAST", !!dv && dv.role === "dev" && d.contribRows[d.contribRows.length - 2].wallet === DEV && d.contribRows[d.contribRows.length - 1].wallet === NEWDEV && d.contribRows[d.contribRows.length - 1].role === "dev2", d.contribRows.map(r => r.wallet.slice(0,4)+(r.role?":"+r.role:"")));
 // da ansem-alloc DEV leg fires here: dev's 5m custodial aug cohort iz
 // stripped (clamped 2 wat da synth cohort holds) n an alloc tx recorded
 check("dev cohorts: jul 1,916,667 (2m minus 1/24 vest) — aug stripped by ansem", dv && dv.cohorts["2026-07"] === 1_916_667n && !dv.cohorts["2026-08"] && Number(dv.paidByMonth["2026-07"] || 0n) / 1e9 === 1, dv && { c: dv.cohorts, p: dv.paidByMonth });
@@ -193,14 +193,23 @@ check("pool EXCLUDES dev (40,683,334 holders: post-vest + E 100k)", d.pool === 4
 // custodial deposits after r1 never earn, holders unchanged.
 const DEV_R1_YM = "2026-07";
 const DEV_EXTRA_STAKES: Record<string, bigint> = { "2026-09": 3461005205545n };
-const eligOf = (r: any, ym: string) => {
-  if (r.role !== "dev") return elig(r, ym);
-  let sum = ym >= DEV_R1_YM ? elig(r, DEV_R1_YM) : 0n;
+// handover: dev basis routes 2 da dev2 row from 2026-09 on (mirrors da page)
+const DEV_HANDOVER_YM = "2026-09";
+const devBasis = (ym: string) => {
+  let sum = ym >= DEV_R1_YM ? elig(dv, DEV_R1_YM) : 0n;
   for (const k of Object.keys(DEV_EXTRA_STAKES)) if (k <= ym) sum += DEV_EXTRA_STAKES[k];
   return sum;
 };
+const eligOf = (r: any, ym: string) => {
+  if (r.role === "dev") return ym >= DEV_HANDOVER_YM ? 0n : devBasis(ym);
+  if (r.role === "dev2") return ym >= DEV_HANDOVER_YM ? devBasis(ym) : 0n;
+  return elig(r, ym);
+};
+const dv2 = d.contribRows.find((r) => r.role === "dev2")!;
 check("dev aug-eligible = 1,916,667 (drained r1 only)", eligOf(dv, "2026-08") === 1_916_667n, eligOf(dv, "2026-08"));
-check("dev sep-eligible = drained r1 + jul-31 stake", eligOf(dv, "2026-09") === 1_916_667n + 3461005205545n, eligOf(dv, "2026-09"));
+check("OLD dev sep-eligible = 0 (handover)", eligOf(dv, "2026-09") === 0n, eligOf(dv, "2026-09"));
+check("dev2 sep-eligible = drained r1 + jul-31 stake (da dev basis moved here)", eligOf(dv2, "2026-09") === 1_916_667n + 3461005205545n, eligOf(dv2, "2026-09"));
+check("dev2 aug-eligible = 0 (b4 handover)", eligOf(dv2, "2026-08") === 0n);
 check("dev jun-eligible = 0 (nothing b4 r1 paid)", Mn(eligOf(dv, "2026-06")) === 0);
 const augPoolR = d.contribRows.reduce((a, r) => a + eligOf(r, "2026-08"), 0n);
 const sepPoolR = d.contribRows.reduce((a, r) => a + eligOf(r, "2026-09"), 0n);
@@ -216,8 +225,8 @@ check("D ledger order: return · unlock · deposit (newest first)", dr.txs.map((
 
 // ── new dev wallet era ──
 check("treasury → NEW dev iz a sweep: E's aug-10 dep → 2026-10 cohort", row(E).cohorts["2026-10"] === 100_000n && row(E).locked === 100_000n, row(E).cohorts);
-check("payout 2 NEW dev credits da dev row (aug 0.5 SOL)", dv && Number(dv.paidByMonth["2026-08"] || 0n) / 1e9 === 0.5, dv && dv.paidByMonth);
-check("NEW dev wallet never gets itz own row", !d.contribRows.find((r) => r.wallet === NEWDEV), d.contribRows.map((r) => r.wallet.slice(0, 6)));
+check("payout 2 NEW dev lands on da dev2 ROW (aug 0.5 SOL, visible)", dv2 && Number(dv2.paidByMonth["2026-08"] || 0n) / 1e9 === 0.5 && !(dv.paidByMonth["2026-08"]), { d2: dv2.paidByMonth, d: dv.paidByMonth });
+check("dev2 row: zero deposits, locked 0, pct 0", dv2.deposited === 0n && dv2.locked === 0n && dv2.pct === 0, { dep: dv2.deposited, l: dv2.locked });
 
 // emit payload 4 da render harness
 const { jstr } = await import("../src/lib/revshare-scan.ts");

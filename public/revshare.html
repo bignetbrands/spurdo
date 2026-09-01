@@ -560,7 +560,7 @@
   // payout routed thru an exchange deposit addr → real locker (multisig payout sheet)
   const PAYOUT_PROXIES = {
     '3RVaxZDX9dFatEwa6TCbV4kr3k5zhY5uX6ufqf3gatuc': 'Hwk1ydVukuzEZ9AQx9UYrDpe2hbYfPSonohvYcqbpadp',
-    '6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y': 'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV', // new dev → dev row
+    // (no proxy 4 da new dev — it haz itz own "dev2" row, payouts land there)
   };
   const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
   const STREAMFLOW_API     = 'https://api-public.streamflow.finance';
@@ -590,7 +590,7 @@
   const $ = (id) => document.getElementById(id);
 
   /* ---------- cache: fetch max evry 5 days, or wen u press refresh ---------- */
-  const CACHE_KEY = 'spurdo_revshare_v18';
+  const CACHE_KEY = 'spurdo_revshare_v19';
   const CACHE_MAX_AGE = 5 * 24 * 3600 * 1000;
   const jstr   = (o) => JSON.stringify(o, (k, v) => typeof v === 'bigint' ? { $b: v.toString() } : v);
   const jparse = (s) => JSON.parse(s, (k, v) => (v && typeof v === 'object' && '$b' in v) ? BigInt(v.$b) : v);
@@ -749,11 +749,22 @@
     '4JLSS9bKhsbH9pN9sA2pGWdmf5Q8aAcr5P8kUb8eSzJ2': 5000000000000n,
     'G9ia5A2UyzDcstjpaXxRPwZL6U3Hwi15j6eSoyWqDexV': 5000000000000n,
   };
-  function eligOf(row, ym) {
-    if (row.role !== 'dev') return eligibleAmt(row, ym);
-    let sum = ym >= DEV_R1_YM ? eligibleAmt(row, DEV_R1_YM) : 0n;
+  // handover: from da sep 2026 cycle on, da dev share iz RECEIVED by da new
+  // dev wallet (dev2 row). da basis (stakes, cohorts) stays physically on da
+  // old dev row — eligOf routes it: old dev earns cycles b4 da handover,
+  // dev2 earns from da handover on. one basis, never double-counted.
+  const DEV_HANDOVER_YM = '2026-09';
+  function devBasis(ym) {
+    const dr = (CONTRIB_ROWS || []).find((r) => r.role === 'dev');
+    if (!dr) return 0n;
+    let sum = ym >= DEV_R1_YM ? eligibleAmt(dr, DEV_R1_YM) : 0n;
     for (const k of Object.keys(DEV_EXTRA_STAKES)) if (k <= ym) sum += DEV_EXTRA_STAKES[k];
     return sum;
+  }
+  function eligOf(row, ym) {
+    if (row.role === 'dev') return ym >= DEV_HANDOVER_YM ? 0n : devBasis(ym);
+    if (row.role === 'dev2') return ym >= DEV_HANDOVER_YM ? devBasis(ym) : 0n;
+    return eligibleAmt(row, ym);
   }
   // wat da table shows as dev's holding: itz own genuine stakes ONLY
   // (r1 + jul-31 = 10,826,277.58) — da custodial benis it also holds
@@ -1173,10 +1184,11 @@
 
       SIG_NODE_STATS.length = 0;
 
-      // 1) da dev wallet received da sweeps — its inflow sources ARE da historical treasury accounts
+      // 1) da dev wallets received da sweeps — der inflow sources ARE da historical treasury accounts
       const dev = await scanWallet(DEV_WALLET, 'dev wallet', onP, undefined, true);
+      const dev2scan = await scanWallet(NEW_DEV_WALLET, 'new dev wallet', onP, undefined, true);
       const candAccts = new Map(); // srcAddr -> {srcOwner, amount}
-      for (const i of dev.ins) {
+      for (const i of [...dev.ins, ...dev2scan.ins]) {
         if (!i.srcAddr) continue;
         const c = candAccts.get(i.srcAddr) || { srcOwner: i.srcOwner, amount: 0n };
         c.amount += i.amount;
@@ -1201,9 +1213,11 @@
       }
       for (const [addr, c] of candAccts) {
         if (c.srcOwner === TREASURY) { discoveredAccts.push(addr); continue; }
-        if (closedMap[addr] && c.amount >= 10n ** BigInt(DECIMALS) * 1000000n / 1000n) { // closed + sweep-sized
+        // closed + sweep-sized ONLY wit unknown owner (mirrors da server —
+        // a KNOWN non-treasury owner iz somebody else's acct; adopting it
+        // made 7yDM's closed trading acct in2 873 phantom deposits aug 2026)
+        if (!c.srcOwner && closedMap[addr] && c.amount >= 10n ** BigInt(DECIMALS) * 1000000n / 1000n) {
           discoveredAccts.push(addr);
-          if (c.srcOwner) discoveredOwners.add(c.srcOwner);
         }
       }
       console.log('discovered treasury accts:', discoveredAccts, 'owners:', [...discoveredOwners]);
@@ -1396,12 +1410,13 @@
 
       let pool = 0n, pendingTotal = 0n;
       for (const [w, a] of agg.entries()) {
-        if (w === DEV_WALLET) continue; // custodian — never in da holder pool
+        if (w === DEV_WALLET || w === NEW_DEV_WALLET) continue; // custodians — never in da holder pool
         pool += a.locked; pendingTotal += a.pending;
       }
+      get(NEW_DEV_WALLET); // new dev gets a row even wit zero deposits
 
       CONTRIB_ROWS = [...agg.entries()]
-        .filter(([w, a]) => a.deposited > 0n)   // evry contributor gets a row — refunded ones show returned
+        .filter(([w, a]) => a.deposited > 0n || w === NEW_DEV_WALLET)   // evry contributor gets a row — refunded ones show returned
         .map(([w, a]) => ({
           wallet: w, locked: a.locked, pending: a.pending,
           deposited: a.deposited, returned: a.returned,
@@ -1410,12 +1425,12 @@
           paid: paid.get(w) || 0n,
           cohorts: a.cohorts, paidByMonth: paidByMonth.get(w) || {},
           txs: (txsByWallet.get(w) || []).slice(0, 60),
-          pct: w === DEV_WALLET || pool <= 0n ? 0 : Number(a.locked * 10000n / pool) / 100,
-          role: w === DEV_WALLET ? 'dev' : undefined,
+          pct: w === DEV_WALLET || w === NEW_DEV_WALLET || pool <= 0n ? 0 : Number(a.locked * 10000n / pool) / 100,
+          role: w === DEV_WALLET ? 'dev' : w === NEW_DEV_WALLET ? 'dev2' : undefined,
         }))
         .sort((x, y) => {
-          if (x.role === 'dev') return 1;
-          if (y.role === 'dev') return -1;
+          const rank = (r) => (r.role === 'dev' ? 1 : r.role === 'dev2' ? 2 : 0);
+          if (rank(x) !== rank(y)) return rank(x) - rank(y);
           return y.locked > x.locked ? 1 : y.locked < x.locked ? -1 : (y.pending > x.pending ? 1 : -1);
         });
 
@@ -1469,13 +1484,17 @@
     const nowYm = new Date(DATA_TS || Date.now()).toISOString().slice(0, 7);
     const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
     // a month iz "paid" once any payout landed in it
-    const paidTotals = {};
-    for (const r of rows) for (const k of Object.keys(r.paidByMonth || {}))
+    const paidTotals = {}, paidCount = {};
+    for (const r of rows) for (const k of Object.keys(r.paidByMonth || {})) {
       paidTotals[k] = (paidTotals[k] || 0n) + r.paidByMonth[k];
-    // once dis month's payout haz landed, da sheet rolls forward: da share
-    // column n da ~sol projections track da NEXT cycle, computed on da pot
-    // so far (da rev wallet refills wit creator fees until da 1st)
-    const activeYm = paidTotals[nowYm] > 0n ? ymAdd(nowYm, 1) : nowYm;
+      if (r.paidByMonth[k] > 0n) paidCount[k] = (paidCount[k] || 0) + 1;
+    }
+    // once dis month's payout RUN haz landed, da sheet rolls forward: da
+    // share column n da ~sol projections track da NEXT cycle on da pot so
+    // far. a run pays MANY wallets — require ≥3 so a single ops transfer
+    // (e.g. rev wallet → new dev) cant flip da whole sheet's state.
+    const monthPaid = (ym) => (paidCount[ym] || 0) >= 3;
+    const activeYm = monthPaid(nowYm) ? ymAdd(nowYm, 1) : nowYm;
     const poolElig = {};
     for (const ym of months) {
       let sum = 0n;
@@ -1486,7 +1505,7 @@
     if (head) head.innerHTML =
       '<th>#</th><th>wallet</th><th>locked</th><th>unlocked</th><th>share of ' + ymLabel(activeYm) + '</th><th>pending</th><th>returned</th><th>last</th>' +
       months.map(ym => {
-        const tag = paidTotals[ym] > 0n ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing'
+        const tag = (ym < nowYm ? paidTotals[ym] > 0n : monthPaid(ym)) ? ' \u00b7 paid' : ym === nowYm ? ' \u00b7 processing'
           : ym === activeYm ? ' \u00b7 next \u00b7 pot filling' : ' \u00b7 next';
         return '<th>' + ymLabel(ym) + tag + '</th>';
       }).join('');
@@ -1534,14 +1553,16 @@
     tb.innerHTML = '';
     rows.forEach((r, i) => {
       const tr = document.createElement('tr');
-      if (r.role === 'dev') tr.className = 'devrow';
+      if (r.role === 'dev' || r.role === 'dev2') tr.className = 'devrow';
       tr.innerHTML =
-        '<td>' + (r.role === 'dev' ? '\u2013' : (i + 1)) + '</td>' +
+        '<td>' + (r.role === 'dev' || r.role === 'dev2' ? '\u2013' : (i + 1)) + '</td>' +
         '<td><span class="wallet-btn" data-wallet="' + esc(r.wallet) + '" title="click 4 da on-chain receipts">' + esc(shortW(r.wallet)) + '</span>' +
           (r.role === 'dev'
-          ? ' <span class="devtag" title="dis iz da OLD dev wallet \u2014 itz stakes n history live here, but rev share n unlocks now pay out 2 da new dev wallet ' + shortW(NEW_DEV_WALLET) + ' (credited 2 dis row). earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (round 1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock \u00b7 from ' + ymLabel(ym) + ')').join(' + ') + ' \u2014 custodial benis it holds 4 da holders iz not counted here">old dev \u00b7 custodian</span>'
+          ? ' <span class="devtag" title="dis iz da OLD dev wallet \u2014 itz stakes (' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' r1 + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt))).join(' + ') + ' jul-31) n history live here. from da sep 2026 cycle da dev share iz received by da NEW dev wallet (last row) \u2014 custodial benis it holds 4 da holders iz not counted here">old dev \u00b7 custodian</span>'
+          : r.role === 'dev2'
+          ? ' <span class="devtag" title="da NEW dev wallet \u2014 receives da dev share from da sep 2026 cycle onward (basis: da old dev row\u2019s stakes, ' + fmtAmt(toUi(devBasis('2026-09'))) + '). itz payouts land on dis row">new dev</span>'
           : '') + '</td>' +
-        '<td>' + fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked)) + '</td>' +
+        '<td>' + (r.role === 'dev2' ? '\u2013' : fmtAmt(toUi(r.role === 'dev' ? devStakesTotal(r) : r.locked))) + '</td>' +
         '<td>' + ((r.unlocked || 0n) > 0n ? fmtAmt(toUi(r.unlocked)) : '–') + '</td>' +
         '<td>' + (poolElig[activeYm] <= 0n || eligOf(r, activeYm) <= 0n
           ? '\u2013'
@@ -1572,7 +1593,8 @@
       ((() => { const al = (r.txs || []).filter(t => t.kind === 'alloc').reduce((a, t) => a + t.amount, 0n);
         return al > 0n ? ' · ansem allocation ' + fmtAmt(toUi(al)) : ''; })()) +
       (r.paid > 0n ? ' · paid ' + fmtSol(r.paid) : '') +
-      (r.role === 'dev' ? ' · earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (r1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock · from ' + ymLabel(ym) + ')').join(' + ') : '');
+      (r.role === 'dev' ? ' · earns only on itz own stakes: ' + fmtAmt(toUi(eligibleAmt(r, DEV_R1_YM))) + ' (r1) + ' + Object.entries(DEV_EXTRA_STAKES).map(([ym, amt]) => fmtAmt(toUi(amt)) + ' (jul-31 lock · from ' + ymLabel(ym) + ')').join(' + ') : '') +
+      (r.role === 'dev2' ? ' · receives da dev share from sep 2026 onward — da basis (' + fmtAmt(toUi(devBasis('2026-09'))) + ') lives on da old dev row' : '');
     const tb = $('hmodalRows');
     tb.innerHTML = '';
     const txs = r.txs || [];
@@ -1619,10 +1641,10 @@
     const months = [ymAdd(nowYm, -1), nowYm, ymAdd(nowYm, 1)];
     // da transfer list 4 da next payout: once dis month iz paid, project
     // each wallet's next-cycle sol on da pot so far (same math as da page)
-    const paidT = {};
+    const paidC = {};
     for (const r of CONTRIB_ROWS) for (const k of Object.keys(r.paidByMonth || {}))
-      paidT[k] = (paidT[k] || 0n) + r.paidByMonth[k];
-    const activeYm = paidT[nowYm] > 0n ? ymAdd(nowYm, 1) : nowYm;
+      if (r.paidByMonth[k] > 0n) paidC[k] = (paidC[k] || 0) + 1;
+    const activeYm = (paidC[nowYm] || 0) >= 3 ? ymAdd(nowYm, 1) : nowYm; // ≥3 = a real run, not an ops transfer
     let actPool = 0n;
     for (const r of CONTRIB_ROWS) actPool += eligOf(r, activeYm);
     const head = 'wallet,locked,unlocked,share_pct,pending_next_lock,deposited,returned,first_deposit,last_deposit,total_paid_sol,'

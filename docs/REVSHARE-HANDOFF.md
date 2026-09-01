@@ -55,14 +55,18 @@ deez r product decisions, not bugs. dont "fix" dem:
    live balance — if a dev stake ever leaves streamflow, or dev adds a NEW
    genuine stake, edit `DEV_EXTRA_STAKES`/`DEV_R1_YM` by hand.
    **DEV WALLET MIGRATION (aug 2026, ism):** G9ia iz da OLD dev wallet —
-   it stays da ledger's dev identity (row · stakes · history). da NEW dev
-   wallet `6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y` signs future
-   locks n receives dev's rev share + unlocks from now on: treasury →
-   new-dev = sweep (cohort timing included), SOL payouts 2 it credit da
-   dev row via `PAYOUT_PROXIES`, n it iz internal — never itz own
-   contributor row. if da NEW wallet ever makes a GENUINE stake of itz
-   own, dat needs a fresh ism decision — dont just add it 2
-   `DEV_EXTRA_STAKES`.
+   it keeps da stakes, cohorts n history ("old dev · custodian" row,
+   clickable). da NEW dev wallet
+   `6y5aBnJb9LshwnwCV1zkmUCU6f7TxGY71FLT22CJJf6Y` haz itz OWN row (role
+   `dev2`, "new dev" tag, pinned very last): from da `DEV_HANDOVER_YM`
+   (2026-09) cycle onward, `eligOf` routes da dev basis 2 da dev2 row —
+   it shows da share, da projections, n receives da SOL payouts (no
+   proxy — payouts 2 6y5a land on itz row visibly). old dev's share
+   column n future cells go dash from sep. one basis, two rows, never
+   double-counted. treasury → new-dev = sweep (cohort timing included) n
+   new-dev iz internal (itz treasury deposits never make a contributor
+   row). if da NEW wallet ever makes a GENUINE stake of itz own, dat
+   needs a fresh ism decision — dont just add it 2 `DEV_EXTRA_STAKES`.
 
 2. **cohort rule** (reverse-engineered from round 1, verified 2 da lamport):
    money earns da first calendar month itz locked for FROM DA START, paid on
